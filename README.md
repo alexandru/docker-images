@@ -1,5 +1,7 @@
 # Docker Images
 
+[![.github/workflows/push.yml](https://github.com/alexandru/docker-images/actions/workflows/push.yml/badge.svg)](https://github.com/alexandru/docker-images/actions/workflows/push.yml)
+
 Personal Docker images that I need as a baseline for other things.
 
 | Image | Build | Description |
