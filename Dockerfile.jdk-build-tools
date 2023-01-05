@@ -1,15 +1,46 @@
 FROM --platform=linux/amd64 ubuntu:latest
+
+# Defining default non-root user UID, GID, and name
+ARG USER_UID="1000"
+ARG USER_GID="1000"
+ARG USER_NAME="sdk"
+
 SHELL ["/bin/bash", "-l", "-c"]
 
-RUN apt update && apt upgrade -y && apt install -y curl zip unzip
+# Creating default non-user
+RUN groupadd -g $USER_GID $USER_NAME && \
+	useradd -m -g $USER_GID -u $USER_UID $USER_NAME
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
+	apt-get install -y zip unzip curl && \
+	rm -rf /var/lib/apt/lists/* && \
+	rm -rf /tmp/*
+
+# Switching to non-root user to install SDKMAN!
+USER $USER_UID:$USER_GID
+WORKDIR /home/sdk
+
 # # Installs SDKMan!
 RUN curl -s "https://get.sdkman.io" | bash
 
 # Installs Java (should be latest Temurin LTS)
-RUN source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install java
-# Installs build tools
-RUN source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install maven
-RUN source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install gradle
-RUN source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install sbt
-RUN source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install scalacli
-RUN source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk install jbang
+RUN source $HOME/.sdkman/bin/sdkman-init.sh && \
+    yes | sdk install java && \
+    yes | sdk install maven && \
+    yes | sdk install gradle && \
+    yes | sdk install sbt && \
+    yes | sdk install scalacli && \
+    yes | sdk install jbang && \
+    rm -rf $HOME/.sdkman/archives/* && \
+    rm -rf $HOME/.sdkman/tmp/*
+
+# ENTRYPOINT bash -c "source $HOME/.sdkman/bin/sdkman-init.sh && $0 $@" 
+ENV GRADLE_HOME=/home/sdk/.sdkman/candidates/gradle/current
+ENV JAVA_HOME=/home/sdk/.sdkman/candidates/java/current
+ENV JBANG_HOME=/home/sdk/.sdkman/candidates/jbang/current
+ENV MAVEN_HOME=/home/sdk/.sdkman/candidates/maven/current
+ENV SBT_HOME=/home/sdk/.sdkman/candidates/sbt/current
+ENV SCALACLI_HOME=/home/sdk/.sdkman/candidates/scalacli/current
+ENV SDKMAN_DIR=/home/sdk/.sdkman
+ENV PATH="${SCALACLI_HOME}/bin:${SBT_HOME}/bin:${MAVEN_HOME}/bin:${JBANG_HOME}/bin:${JAVA_HOME}/bin:${GRADLE_HOME}/bin:$PATH"
