@@ -7,7 +7,7 @@ ARG USER_NAME="sdk"
 
 SHELL ["/bin/bash", "-l", "-c"]
 
-# Creating default non-user
+# Creating default non-root user
 RUN groupadd -g $USER_GID $USER_NAME && \
 	useradd -m -g $USER_GID -u $USER_UID $USER_NAME
 
