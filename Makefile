@@ -1,8 +1,7 @@
-NAME := ghcr.io/alexandru/jdk-build-tools
-TAG  := ${NAME}:latest
+BUILD_TOOLS_TAG := ghcr.io/alexandru/jdk-build-tools:latest
 
 build:
-	docker build -f ./Dockerfile -t "${TAG}" .
+	docker build -f ./Dockerfile.jdk-build-tools -t "${BUILD_TOOLS_TAG}" .
 
 push:
-	docker push "${TAG}"
+	docker push "${BUILD_TOOLS_TAG}"
