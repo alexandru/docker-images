@@ -1,5 +1,5 @@
 FROM --platform=linux/amd64 ubuntu:latest
-SHELL ["/bin/bash", "-c"]
+SHELL ["/bin/bash", "-l", "-c"]
 
 RUN apt update && apt upgrade -y && apt install -y curl zip unzip
 # # Installs SDKMan!
