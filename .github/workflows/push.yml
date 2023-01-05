@@ -22,6 +22,10 @@ jobs:
         env:
           GIT_TAG: ${{ github.ref }}
 
+      - name: Log in to registry
+        # This is where you will update the personal access token to GITHUB_TOKEN
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+        
       - name: Push Docker images
         run: |
           make push
