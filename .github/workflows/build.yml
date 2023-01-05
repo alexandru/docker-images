@@ -1,0 +1,38 @@
+on:
+  push:
+    branches:
+      - "main"
+  schedule:
+    # Runs every week
+    - cron: '0 0 * * 0'
+
+jobs:
+  deploy_docker:
+    runs-on: ubuntu-lastest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Docker
+        run: |
+          sudo apt-get remove docker docker-engine docker.io containerd runc
+          sudo apt-get install apt-transport-https ca-certificates curl software-properties-common
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+          sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+          sudo apt-get update
+          sudo apt-get install docker-ce docker-ce-cli containerd.io
+      - name: Login to Docker
+        run: docker login ghcr.io --username=alexandru --password="$GH_TOKEN"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker images
+        run: |
+          make build
+        env:
+          GIT_TAG: ${{ github.ref }}
+
+      - name: Push Docker images
+        run: |
+          make push
+        env:
+          GIT_TAG: ${{ github.ref }}
