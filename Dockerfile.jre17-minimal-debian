@@ -9,7 +9,7 @@ RUN $JAVA_HOME/bin/jlink \
         --compress=2 \
         --output /javaruntime
 
-# Define your base image
+# Our resulting Debian-based image
 FROM --platform=linux/amd64 debian:buster-slim
 ENV JAVA_HOME=/opt/java
 ENV PATH "${JAVA_HOME}/bin:${PATH}"
