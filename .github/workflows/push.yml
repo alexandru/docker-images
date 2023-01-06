@@ -61,7 +61,7 @@ jobs:
 
       - name: Build Docker image
         run: |
-          make push-jre17-minimal-alpine
+          make build-jre17-minimal-alpine
 
       - name: Log in to registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
