@@ -7,7 +7,8 @@ on:
     - cron: '0 0 * * 0'
 
 jobs:
-  push:
+  push-tools:
+    name: jdk-build-tools
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -16,18 +17,55 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Build Docker images
+      - name: Build Docker image
         run: |
-          make build
-        env:
-          GIT_TAG: ${{ github.ref }}
+          make build-jdk-build-tools
 
       - name: Log in to registry
-        # This is where you will update the personal access token to GITHUB_TOKEN
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
         
-      - name: Push Docker images
+      - name: Push Docker image
         run: |
-          make push
-        env:
-          GIT_TAG: ${{ github.ref }}
+          make push-jdk-build-tools
+
+  push-jre17-minimal-debian:
+    name: jre17-minimal-debian
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build Docker image
+        run: |
+          make build-jre17-minimal-debian
+
+      - name: Log in to registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+        
+      - name: Push Docker image
+        run: |
+          make push-jre17-minimal-debian
+
+  push-jre17-minimal-alpine:
+    name: jre17-minimal-alpine
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build Docker image
+        run: |
+          make push-jre17-minimal-alpine
+
+      - name: Log in to registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+        
+      - name: Push Docker image
+        run: |
+          make push-jre17-minimal-alpine
