@@ -8,8 +8,23 @@ ARG USER_NAME="sdk"
 SHELL ["/bin/bash", "-l", "-c"]
 
 # Creating default non-root user
-RUN groupadd -g $USER_GID $USER_NAME && \
-	useradd -m -g $USER_GID -u $USER_UID $USER_NAME
+RUN if getent group "$USER_GID" >/dev/null; then \
+        existing_group="$(getent group "$USER_GID" | cut -d: -f1)"; \
+        if [ "$existing_group" != "$USER_NAME" ]; then \
+            groupmod -n "$USER_NAME" "$existing_group"; \
+        fi; \
+    else \
+        groupadd -g "$USER_GID" "$USER_NAME"; \
+    fi && \
+    if getent passwd "$USER_UID" >/dev/null; then \
+        existing_user="$(getent passwd "$USER_UID" | cut -d: -f1)"; \
+        if [ "$existing_user" != "$USER_NAME" ]; then \
+            usermod -l "$USER_NAME" "$existing_user"; \
+        fi; \
+        usermod -d "/home/$USER_NAME" -m -s /bin/bash -g "$USER_NAME" "$USER_NAME"; \
+    else \
+        useradd -m -s /bin/bash -g "$USER_NAME" -u "$USER_UID" "$USER_NAME"; \
+    fi
 
 RUN apt-get update && \
     apt-get upgrade -y && \

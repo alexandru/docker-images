@@ -13,7 +13,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Build Docker image
         run: |
@@ -34,13 +34,14 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           repository: alexandru/opencode-config
           path: .build/opencode-config
-          token: ${{ github.token }}
+          token: ${{ secrets.OPENCODE_CONFIG_TOKEN }}
+          persist-credentials: false
 
       - name: Build Docker image
         run: |
@@ -61,7 +62,7 @@ jobs:
       contents: read
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Build Docker image
         run: |
@@ -82,7 +83,7 @@ jobs:
       contents: read
     
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Build Docker image
         run: |
