@@ -5,7 +5,7 @@ IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:late
 HOME_VOLUME="${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}"
 
 usage() {
-    printf 'Usage: %s {start|stop|restart|shell|purge} <project-directory>\n' "$0" >&2
+    printf 'Usage: %s {start|stop|restart|shell|start-agent|purge} <project-directory>\n' "$0" >&2
 }
 
 find_container_cli() {
@@ -97,6 +97,11 @@ shell_container() {
     "$CONTAINER_CLI" exec -it "$CONTAINER_NAME" bash
 }
 
+start_agent() {
+    start_container >/dev/null
+    "$CONTAINER_CLI" exec -it "$CONTAINER_NAME" opencode serve --port 10012 --hostname "0.0.0.0"
+}
+
 purge_container() {
     if container_exists; then
         "$CONTAINER_CLI" rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
@@ -135,6 +140,9 @@ case "$COMMAND" in
         ;;
     shell)
         shell_container
+        ;;
+    start-agent)
+        start_agent
         ;;
     purge)
         purge_container
