@@ -3,9 +3,12 @@ set -euo pipefail
 
 IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:latest}"
 HOME_VOLUME="${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}"
+CONTAINER_PREFIX="jdk-build-tools-dev-"
+CONTAINER_LABEL="com.alexandru.docker-images.devcontainer=true"
 
 usage() {
     printf 'Usage: %s {start|stop|restart|shell|start-agent|purge} <project-directory>\n' "$0" >&2
+    printf '       %s purge-all\n' "$0" >&2
 }
 
 find_container_cli() {
@@ -48,7 +51,7 @@ container_name() {
         slug="project"
     fi
 
-    printf 'jdk-build-tools-dev-%s-%s\n' "$slug" "$checksum"
+    printf '%s%s-%s\n' "$CONTAINER_PREFIX" "$slug" "$checksum"
 }
 
 container_exists() {
@@ -68,6 +71,8 @@ start_container() {
 
         "$CONTAINER_CLI" run -d \
             --name "$CONTAINER_NAME" \
+            --label "$CONTAINER_LABEL" \
+            --label "com.alexandru.docker-images.devcontainer.project=$PROJECT_DIR" \
             -v "$PROJECT_DIR:/workspace" \
             -v "$HOME_VOLUME:/home/dev" \
             "${ssh_args[@]}" \
@@ -109,23 +114,86 @@ purge_container() {
     else
         printf 'Container does not exist: %s\n' "$CONTAINER_NAME"
     fi
-
-    "$CONTAINER_CLI" volume rm -f "$HOME_VOLUME" >/dev/null 2>&1 || true
-    printf 'Deleted volume: %s\n' "$HOME_VOLUME"
 }
 
-if [ "$#" -ne 2 ]; then
+add_container_ids() {
+    local id
+
+    while IFS= read -r id; do
+        if [ -n "$id" ]; then
+            case " ${CONTAINER_IDS[*]} " in
+                *" $id "*) ;;
+                *) CONTAINER_IDS+=("$id") ;;
+            esac
+        fi
+    done < <("$CONTAINER_CLI" ps -aq --filter "$1" 2>/dev/null || true)
+}
+
+purge_all() {
+    local CONTAINER_IDS=()
+
+    add_container_ids "label=$CONTAINER_LABEL"
+    add_container_ids "name=^/${CONTAINER_PREFIX}"
+
+    if [ "${#CONTAINER_IDS[@]}" -gt 0 ]; then
+        "$CONTAINER_CLI" rm -f "${CONTAINER_IDS[@]}" >/dev/null 2>&1 || true
+        printf 'Deleted devcontainer containers: %s\n' "${#CONTAINER_IDS[@]}"
+    else
+        printf 'No devcontainer containers found.\n'
+    fi
+
+    if "$CONTAINER_CLI" volume inspect "$HOME_VOLUME" >/dev/null 2>&1; then
+        "$CONTAINER_CLI" volume rm -f "$HOME_VOLUME" >/dev/null 2>&1 || true
+        printf 'Deleted volume: %s\n' "$HOME_VOLUME"
+    else
+        printf 'Volume does not exist: %s\n' "$HOME_VOLUME"
+    fi
+
+    if "$CONTAINER_CLI" image inspect "$IMAGE" >/dev/null 2>&1; then
+        "$CONTAINER_CLI" rmi -f "$IMAGE" >/dev/null 2>&1 || true
+        printf 'Deleted image: %s\n' "$IMAGE"
+    else
+        printf 'Image does not exist: %s\n' "$IMAGE"
+    fi
+}
+
+if [ "$#" -lt 1 ]; then
     usage
     exit 1
 fi
 
 COMMAND="$1"
-PROJECT_DIR="$(project_path "$2")"
+PROJECT_DIR=""
+
+case "$COMMAND" in
+    start|stop|restart|shell|start-agent|purge)
+        if [ "$#" -ne 2 ]; then
+            usage
+            exit 1
+        fi
+
+        PROJECT_DIR="$(project_path "$2")"
+        ;;
+    purge-all)
+        if [ "$#" -ne 1 ]; then
+            usage
+            exit 1
+        fi
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac
+
 CONTAINER_CLI="$(find_container_cli)" || {
     printf 'No container CLI found. Install wslc.exe, docker, or podman, or set CONTAINER_CLI.\n' >&2
     exit 1
 }
-CONTAINER_NAME="$(container_name "$PROJECT_DIR")"
+
+if [ -n "$PROJECT_DIR" ]; then
+    CONTAINER_NAME="$(container_name "$PROJECT_DIR")"
+fi
 
 case "$COMMAND" in
     start)
@@ -146,6 +214,9 @@ case "$COMMAND" in
         ;;
     purge)
         purge_container
+        ;;
+    purge-all)
+        purge_all
         ;;
     *)
         usage
