@@ -5,7 +5,7 @@ IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:late
 HOME_VOLUME="${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}"
 
 usage() {
-    printf 'Usage: %s {start|stop|restart} <project-directory>\n' "$0" >&2
+    printf 'Usage: %s {start|stop|restart|shell|purge} <project-directory>\n' "$0" >&2
 }
 
 find_container_cli() {
@@ -91,6 +91,23 @@ stop_container() {
     fi
 }
 
+shell_container() {
+    start_container >/dev/null
+    "$CONTAINER_CLI" exec -it "$CONTAINER_NAME" bash
+}
+
+purge_container() {
+    if container_exists; then
+        "$CONTAINER_CLI" rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        printf 'Deleted container: %s\n' "$CONTAINER_NAME"
+    else
+        printf 'Container does not exist: %s\n' "$CONTAINER_NAME"
+    fi
+
+    "$CONTAINER_CLI" volume rm -f "$HOME_VOLUME" >/dev/null 2>&1 || true
+    printf 'Deleted volume: %s\n' "$HOME_VOLUME"
+}
+
 if [ "$#" -ne 2 ]; then
     usage
     exit 1
@@ -114,6 +131,12 @@ case "$COMMAND" in
     restart)
         stop_container
         start_container
+        ;;
+    shell)
+        shell_container
+        ;;
+    purge)
+        purge_container
         ;;
     *)
         usage

@@ -21,6 +21,12 @@ Start a container with a project mounted at `/workspace`:
 ./bin/devcontainer start /path/to/project
 ```
 
+Open a shell in the container, starting it first if needed:
+
+```sh
+./bin/devcontainer shell /path/to/project
+```
+
 The script uses the first available CLI from `wslc.exe`, `wslc`, `docker`, or `podman`. It mounts the project at `/workspace` and persists `/home/dev` in a named volume.
 
 Stop or restart the container for the same project:
@@ -28,6 +34,12 @@ Stop or restart the container for the same project:
 ```sh
 ./bin/devcontainer stop /path/to/project
 ./bin/devcontainer restart /path/to/project
+```
+
+Delete the container and persisted `/home/dev` volume:
+
+```sh
+./bin/devcontainer purge /path/to/project
 ```
 
 For VS Code Dev Containers:
