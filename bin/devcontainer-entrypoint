@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+target="$HOME/.config/opencode"
+source="/usr/local/share/opencode-config"
+
+mkdir -p "$target"
+
+if [ -d "$target/opencode-config" ]; then
+    cp -a "$target/opencode-config/." "$target/"
+    rm -rf "$target/opencode-config"
+fi
+
+cp -a "$source/." "$target/"
+
+exec "$@"

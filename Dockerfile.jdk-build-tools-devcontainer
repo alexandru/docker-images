@@ -1,0 +1,97 @@
+FROM --platform=linux/amd64 ubuntu:26.04
+
+ARG USER_UID="1000"
+ARG USER_GID="1000"
+
+SHELL ["/bin/bash", "-lc"]
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        less \
+        nodejs \
+        npm \
+        openssh-client \
+        sudo \
+        tar \
+        unzip \
+        zip && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /tmp/*
+
+RUN if getent group "$USER_GID" >/dev/null; then \
+        existing_group="$(getent group "$USER_GID" | cut -d: -f1)"; \
+        if [ "$existing_group" != "dev" ]; then \
+            groupmod -n dev "$existing_group"; \
+        fi; \
+    else \
+        groupadd -g "$USER_GID" dev; \
+    fi && \
+    if getent passwd "$USER_UID" >/dev/null; then \
+        existing_user="$(getent passwd "$USER_UID" | cut -d: -f1)"; \
+        if [ "$existing_user" != "dev" ]; then \
+            usermod -l dev "$existing_user"; \
+        fi; \
+        usermod -d /home/dev -m -s /bin/bash -g dev dev; \
+    else \
+        useradd -m -s /bin/bash -g dev -u "$USER_UID" dev; \
+    fi && \
+    echo "dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/dev && \
+    chmod 0440 /etc/sudoers.d/dev && \
+    mkdir -p /etc/ssh/ssh_known_hosts.d /opt/sdkman /workspace /workspaces /home/dev/.config && \
+    ssh-keyscan github.com > /etc/ssh/ssh_known_hosts && \
+    chown -R dev:dev /opt/sdkman /workspace /workspaces /home/dev
+
+ENV SDKMAN_DIR=/opt/sdkman
+
+USER dev
+WORKDIR /home/dev
+
+RUN curl -fsSL https://get.sdkman.io | bash && \
+    source "$SDKMAN_DIR/bin/sdkman-init.sh" && \
+    JAVA_VERSION="$(sdk list java | awk -F'|' '{ vendor_field=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", vendor_field); if (vendor_field != "") vendor=vendor_field; version=$3; gsub(/^[[:space:]]+|[[:space:]]+$/, "", version); identifier=$6; gsub(/^[[:space:]]+|[[:space:]]+$/, "", identifier); if (vendor == "Temurin" && version ~ /^21\./) { print identifier; exit } }')" && \
+    test -n "$JAVA_VERSION" && \
+    yes | sdk install java "$JAVA_VERSION" && \
+    yes | sdk install maven && \
+    yes | sdk install gradle && \
+    yes | sdk install sbt && \
+    yes | sdk install scalacli && \
+    yes | sdk install jbang && \
+    rm -rf "$SDKMAN_DIR/archives"/* && \
+    rm -rf "$SDKMAN_DIR/tmp"/*
+
+ENV GRADLE_HOME=/opt/sdkman/candidates/gradle/current
+ENV JAVA_HOME=/opt/sdkman/candidates/java/current
+ENV JBANG_HOME=/opt/sdkman/candidates/jbang/current
+ENV MAVEN_HOME=/opt/sdkman/candidates/maven/current
+ENV SBT_HOME=/opt/sdkman/candidates/sbt/current
+ENV SCALACLI_HOME=/opt/sdkman/candidates/scalacli/current
+ENV HOME=/home/dev
+ENV PATH="/home/dev/.config/opencode/bin:/usr/local/bin:${SCALACLI_HOME}/bin:${SBT_HOME}/bin:${MAVEN_HOME}/bin:${JBANG_HOME}/bin:${JAVA_HOME}/bin:${GRADLE_HOME}/bin:${PATH}"
+
+RUN mkdir -p /tmp/opencode-home && \
+    curl -fsSL https://opencode.ai/install | HOME=/tmp/opencode-home bash -s -- --no-modify-path && \
+    /tmp/opencode-home/.opencode/bin/opencode --version
+
+USER root
+RUN cp /tmp/opencode-home/.opencode/bin/opencode /usr/local/bin/opencode && \
+    chmod 0755 /usr/local/bin/opencode && \
+    rm -rf /tmp/opencode-home
+
+COPY bin/devcontainer-entrypoint /usr/local/bin/devcontainer-entrypoint
+COPY --chown=dev:dev .build/opencode-config /usr/local/share/opencode-config
+RUN chmod 0755 /usr/local/bin/devcontainer-entrypoint && \
+    printf '\nexport SDKMAN_DIR=/opt/sdkman\n[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && source "$SDKMAN_DIR/bin/sdkman-init.sh"\n' >> /etc/bash.bashrc && \
+    mkdir -p /home/dev/.config/opencode && \
+    cp -a /usr/local/share/opencode-config/. /home/dev/.config/opencode/ && \
+    chown -R dev:dev /home/dev/.config
+
+USER dev
+WORKDIR /workspace
+VOLUME ["/workspace", "/home/dev"]
+ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]
+CMD ["bash"]

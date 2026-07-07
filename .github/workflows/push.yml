@@ -11,7 +11,7 @@ jobs:
     permissions:
       packages: write
       contents: read
-    
+
     steps:
       - uses: actions/checkout@v3
 
@@ -21,10 +21,37 @@ jobs:
 
       - name: Log in to registry
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
-        
+
       - name: Push Docker image
         run: |
           make push-jdk-build-tools
+
+  push-tools-devcontainer:
+    name: jdk-build-tools-devcontainer
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/checkout@v3
+        with:
+          repository: alexandru/opencode-config
+          path: .build/opencode-config
+          token: ${{ github.token }}
+
+      - name: Build Docker image
+        run: |
+          make build-jdk-build-tools-devcontainer
+
+      - name: Log in to registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+
+      - name: Push Docker image
+        run: |
+          make push-jdk-build-tools-devcontainer
 
   push-jre17-minimal-debian:
     name: jre17-minimal-debian

@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:latest}"
+HOME_VOLUME="${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}"
+
+usage() {
+    printf 'Usage: %s {start|stop|restart} <project-directory>\n' "$0" >&2
+}
+
+find_container_cli() {
+    if [ -n "${CONTAINER_CLI:-}" ]; then
+        printf '%s\n' "$CONTAINER_CLI"
+        return 0
+    fi
+
+    for cli in wslc.exe wslc docker podman; do
+        if command -v "$cli" >/dev/null 2>&1; then
+            command -v "$cli"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+project_path() {
+    local path="$1"
+
+    if [ ! -d "$path" ]; then
+        printf 'Project directory does not exist: %s\n' "$path" >&2
+        exit 1
+    fi
+
+    cd "$path" && pwd -P
+}
+
+container_name() {
+    local project_dir="$1"
+    local base slug checksum
+
+    base="$(basename "$project_dir")"
+    slug="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]_.-' '-')"
+    checksum="$(printf '%s' "$project_dir" | cksum)"
+    checksum="${checksum%% *}"
+
+    if [ -z "$slug" ]; then
+        slug="project"
+    fi
+
+    printf 'jdk-build-tools-dev-%s-%s\n' "$slug" "$checksum"
+}
+
+container_exists() {
+    "$CONTAINER_CLI" inspect "$CONTAINER_NAME" >/dev/null 2>&1
+}
+
+start_container() {
+    if container_exists; then
+        "$CONTAINER_CLI" start "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    else
+        "$CONTAINER_CLI" volume create "$HOME_VOLUME" >/dev/null 2>&1 || true
+
+        local ssh_args=()
+        if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+            ssh_args=(-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
+        fi
+
+        "$CONTAINER_CLI" run -d \
+            --name "$CONTAINER_NAME" \
+            -v "$PROJECT_DIR:/workspace" \
+            -v "$HOME_VOLUME:/home/dev" \
+            "${ssh_args[@]}" \
+            -w /workspace \
+            "$IMAGE" \
+            sleep infinity >/dev/null
+    fi
+
+    printf 'Container: %s\n' "$CONTAINER_NAME"
+    printf 'Project:   %s -> /workspace\n' "$PROJECT_DIR"
+    printf 'Home:      %s -> /home/dev\n' "$HOME_VOLUME"
+    printf 'Shell:     %q exec -it %q bash\n' "$CONTAINER_CLI" "$CONTAINER_NAME"
+}
+
+stop_container() {
+    if container_exists; then
+        "$CONTAINER_CLI" stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        printf 'Stopped: %s\n' "$CONTAINER_NAME"
+    else
+        printf 'Container does not exist: %s\n' "$CONTAINER_NAME"
+    fi
+}
+
+if [ "$#" -ne 2 ]; then
+    usage
+    exit 1
+fi
+
+COMMAND="$1"
+PROJECT_DIR="$(project_path "$2")"
+CONTAINER_CLI="$(find_container_cli)" || {
+    printf 'No container CLI found. Install wslc.exe, docker, or podman, or set CONTAINER_CLI.\n' >&2
+    exit 1
+}
+CONTAINER_NAME="$(container_name "$PROJECT_DIR")"
+
+case "$COMMAND" in
+    start)
+        start_container
+        ;;
+    stop)
+        stop_container
+        ;;
+    restart)
+        stop_container
+        start_container
+        ;;
+    *)
+        usage
+        exit 1
+        ;;
+esac

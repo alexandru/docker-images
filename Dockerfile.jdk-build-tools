@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 ubuntu:latest
+FROM --platform=linux/amd64 ubuntu:26.04
 
 # Defining default non-root user UID, GID, and name
 ARG USER_UID="1000"
@@ -24,9 +24,11 @@ WORKDIR /home/sdk
 # # Installs SDKMan!
 RUN curl -s "https://get.sdkman.io" | bash
 
-# Installs Java (should be latest Temurin LTS)
+# Installs Java and JVM build tools
 RUN source $HOME/.sdkman/bin/sdkman-init.sh && \
-    yes | sdk install java && \
+    JAVA_VERSION="$(sdk list java | awk -F'|' '{ vendor_field=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", vendor_field); if (vendor_field != "") vendor=vendor_field; version=$3; gsub(/^[[:space:]]+|[[:space:]]+$/, "", version); identifier=$6; gsub(/^[[:space:]]+|[[:space:]]+$/, "", identifier); if (vendor == "Temurin" && version ~ /^21\./) { print identifier; exit } }')" && \
+    test -n "$JAVA_VERSION" && \
+    yes | sdk install java "$JAVA_VERSION" && \
     yes | sdk install maven && \
     yes | sdk install gradle && \
     yes | sdk install sbt && \
