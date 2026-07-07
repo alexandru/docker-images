@@ -101,5 +101,6 @@ RUN chmod 0755 /usr/local/bin/devcontainer-entrypoint && \
 USER dev
 WORKDIR /workspace
 VOLUME ["/workspace", "/home/dev"]
+EXPOSE 10012
 ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]
 CMD ["bash"]

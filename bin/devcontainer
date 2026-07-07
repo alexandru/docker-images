@@ -71,6 +71,7 @@ start_container() {
             -v "$PROJECT_DIR:/workspace" \
             -v "$HOME_VOLUME:/home/dev" \
             "${ssh_args[@]}" \
+            -p 10012:10012 \
             -w /workspace \
             "$IMAGE" \
             sleep infinity >/dev/null
