@@ -43,13 +43,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-        with:
-          repository: alexandru/opencode-config
-          path: .build/opencode-config
-          token: ${{ secrets.OPENCODE_CONFIG_TOKEN }}
-          persist-credentials: false
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

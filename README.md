@@ -13,53 +13,6 @@ Personal Docker images that I need as a baseline for other things.
 
 NOTE: images are being rebuilt every week with the latest versions of the software, so they are kept up to date.
 
-## Dev Container Usage
+## Dev Container
 
-Start a container with a project mounted at `/workspace`:
-
-```sh
-./bin/devcontainer start /path/to/project
-```
-
-Open a shell in the container, starting it first if needed:
-
-```sh
-./bin/devcontainer shell /path/to/project
-```
-
-The script uses the first available CLI from `wslc.exe`, `wslc`, `docker`, or `podman`. It mounts the project at `/workspace` and persists `/home/dev` in a named volume per workspace.
-
-Stop or restart the container for the same project:
-
-```sh
-./bin/devcontainer stop /path/to/project
-./bin/devcontainer restart /path/to/project
-```
-
-Delete the container and `/home/dev` volume for a project:
-
-```sh
-./bin/devcontainer purge /path/to/project
-```
-
-Delete all devcontainer containers and their `/home/dev` volumes without deleting the image:
-
-```sh
-./bin/devcontainer purge-all
-```
-
-For VS Code Dev Containers:
-
-```json
-{
-  "image": "ghcr.io/alexandru/jdk-build-tools-devcontainer:latest",
-  "remoteUser": "dev",
-  "workspaceFolder": "/workspace",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-  "mounts": [
-    "source=jdk-build-tools-devcontainer-home-${localWorkspaceFolderBasename},target=/home/dev,type=volume"
-  ]
-}
-```
-
-If you use WSL containers in VS Code, set the Dev Containers extension Docker Path setting to `wslc`.
+A helper script is available at [`./bin/devcontainer`](./bin/devcontainer). Run it with `--help` for usage.

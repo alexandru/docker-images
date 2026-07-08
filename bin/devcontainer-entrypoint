@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-target="$HOME/.config/opencode"
-source="/usr/local/share/opencode-config"
-
-mkdir -p "$target"
-
-if [ -n "${DEVCONTAINER_GO_API_KEY:-}" ] && [ -z "${OPENCODE_API_KEY:-}" ]; then
-    export OPENCODE_API_KEY="$DEVCONTAINER_GO_API_KEY"
+if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ] && [ -z "${OPENCODE_API_KEY:-}" ]; then
+    export OPENCODE_API_KEY="$DEVCONTAINER_OPENCODE_GO_API_KEY"
 fi
-
-if [ -d "$target/opencode-config" ]; then
-    cp -a "$target/opencode-config/." "$target/"
-    rm -rf "$target/opencode-config"
-fi
-
-cp -a "$source/." "$target/"
 
 exec "$@"

@@ -5,12 +5,79 @@ IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:late
 HOME_VOLUME_PREFIX="${DEVCONTAINER_HOME_VOLUME_PREFIX:-${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}-}"
 CONTAINER_PREFIX="jdk-build-tools-dev-"
 CONTAINER_LABEL="com.alexandru.docker-images.devcontainer=true"
+OPENCODE_CONFIG_CONTAINER_DIR="/opt/opencode-config"
 
 usage() {
-    printf 'Usage: %s {start|stop|restart|shell|start-agent|purge} <project-directory>\n' "$0" >&2
-    printf '       %s purge-all\n' "$0" >&2
+    local command="${1:-}"
+
+    case "$command" in
+        start)
+            printf 'Usage: %s start <project-directory>\n' "$0" >&2
+            printf '\nStart the devcontainer for a project.\n' >&2
+            ;;
+        stop)
+            printf 'Usage: %s stop <project-directory>\n' "$0" >&2
+            printf '\nStop the devcontainer for a project.\n' >&2
+            ;;
+        restart)
+            printf 'Usage: %s restart <project-directory>\n' "$0" >&2
+            printf '\nStop and start the devcontainer for a project.\n' >&2
+            ;;
+        shell)
+            printf 'Usage: %s shell <project-directory>\n' "$0" >&2
+            printf '\nOpen an interactive shell in the project devcontainer, starting it first if needed.\n' >&2
+            ;;
+        agent)
+            printf 'Usage: %s agent <project-directory>\n' "$0" >&2
+            printf '\nStart opencode in the project devcontainer, starting the container first if needed.\n' >&2
+            ;;
+        agent-serve)
+            printf 'Usage: %s agent-serve <project-directory>\n' "$0" >&2
+            printf '\nStart the opencode server in the project devcontainer, starting the container first if needed.\n' >&2
+            ;;
+        purge)
+            printf 'Usage: %s purge <project-directory>\n' "$0" >&2
+            printf '\nDelete the project devcontainer and its /home/dev volume.\n' >&2
+            ;;
+        purge-all)
+            printf 'Usage: %s purge-all\n' "$0" >&2
+            printf '\nDelete all devcontainer containers and /home/dev volumes. The image is not deleted.\n' >&2
+            ;;
+        ""|help)
+            printf 'Usage:\n' >&2
+            printf '  %s start <project-directory>\n' "$0" >&2
+            printf '  %s stop <project-directory>\n' "$0" >&2
+            printf '  %s restart <project-directory>\n' "$0" >&2
+            printf '  %s shell <project-directory>\n' "$0" >&2
+            printf '  %s agent <project-directory>\n' "$0" >&2
+            printf '  %s agent-serve <project-directory>\n' "$0" >&2
+            printf '  %s purge <project-directory>\n' "$0" >&2
+            printf '  %s purge-all\n' "$0" >&2
+            printf '  %s help [command]\n' "$0" >&2
+            printf '\nCommands:\n' >&2
+            printf '  start        Start the project devcontainer.\n' >&2
+            printf '  stop         Stop the project devcontainer.\n' >&2
+            printf '  restart      Stop and start the project devcontainer.\n' >&2
+            printf '  shell        Open a shell in the project devcontainer.\n' >&2
+            printf '  agent        Start opencode in the project devcontainer.\n' >&2
+            printf '  agent-serve  Start the opencode server in the project devcontainer.\n' >&2
+            printf '  purge        Delete the project devcontainer and volume.\n' >&2
+            printf '  purge-all    Delete all devcontainer containers and volumes.\n' >&2
+            printf '  help         Show this help or help for a command.\n' >&2
+            ;;
+        *)
+            printf 'Unknown command: %s\n\n' "$command" >&2
+            usage
+            return 0
+            ;;
+    esac
+
     printf '\nEnvironment:\n' >&2
-    printf '  DEVCONTAINER_GO_API_KEY  Optional OpenCode Go API key forwarded into the container.\n' >&2
+    printf '  CONTAINER_CLI                     Container CLI to use. Defaults to first available wslc.exe, wslc, docker, or podman.\n' >&2
+    printf '  DEVCONTAINER_IMAGE                Image to run. Defaults to %s.\n' "$IMAGE" >&2
+    printf '  DEVCONTAINER_HOME_VOLUME_PREFIX   Prefix for per-workspace /home/dev volumes. Defaults to %s.\n' "$HOME_VOLUME_PREFIX" >&2
+    printf '  DEVCONTAINER_OPENCODE_GO_API_KEY  Optional OpenCode Go API key forwarded into the container.\n' >&2
+    printf '  DEVCONTAINER_OPENCODE_CONFIG_DIR  Optional host config directory mounted read-only; sets OPENCODE_CONFIG_DIR=%s inside the container.\n' "$OPENCODE_CONFIG_CONTAINER_DIR" >&2
 }
 
 find_container_cli() {
@@ -34,6 +101,17 @@ project_path() {
 
     if [ ! -d "$path" ]; then
         printf 'Project directory does not exist: %s\n' "$path" >&2
+        exit 1
+    fi
+
+    cd "$path" && pwd -P
+}
+
+opencode_config_path() {
+    local path="$1"
+
+    if [ ! -d "$path" ]; then
+        printf 'OpenCode config directory does not exist: %s\n' "$path" >&2
         exit 1
     fi
 
@@ -72,8 +150,36 @@ container_exists() {
     "$CONTAINER_CLI" inspect "$CONTAINER_NAME" >/dev/null 2>&1
 }
 
+configure_opencode_config_mount() {
+    if [ -n "${DEVCONTAINER_OPENCODE_CONFIG_DIR:-}" ]; then
+        OPENCODE_CONFIG_HOST_DIR="$(opencode_config_path "$DEVCONTAINER_OPENCODE_CONFIG_DIR")"
+    fi
+}
+
+container_opencode_config_source() {
+    "$CONTAINER_CLI" inspect \
+        --format "{{range .Mounts}}{{if eq .Destination \"$OPENCODE_CONFIG_CONTAINER_DIR\"}}{{println .Source}}{{end}}{{end}}" \
+        "$CONTAINER_NAME" 2>/dev/null || true
+}
+
+ensure_opencode_config_mount() {
+    local source
+
+    if [ -z "$OPENCODE_CONFIG_HOST_DIR" ]; then
+        return 0
+    fi
+
+    source="$(container_opencode_config_source)"
+    if [ "$source" != "$OPENCODE_CONFIG_HOST_DIR" ]; then
+        printf 'Container already exists without the requested OpenCode config mount.\n' >&2
+        printf 'Run `%s purge %q` and start it again to apply DEVCONTAINER_OPENCODE_CONFIG_DIR.\n' "$0" "$PROJECT_DIR" >&2
+        exit 1
+    fi
+}
+
 start_container() {
     if container_exists; then
+        ensure_opencode_config_mount
         "$CONTAINER_CLI" start "$CONTAINER_NAME" >/dev/null 2>&1 || true
     else
         "$CONTAINER_CLI" volume create \
@@ -87,8 +193,16 @@ start_container() {
         fi
 
         local opencode_env_args=()
-        if [ -n "${DEVCONTAINER_GO_API_KEY:-}" ]; then
-            opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_GO_API_KEY")
+        if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ]; then
+            opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_OPENCODE_GO_API_KEY")
+        fi
+
+        local opencode_config_args=()
+        if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
+            opencode_config_args=(
+                -v "$OPENCODE_CONFIG_HOST_DIR:$OPENCODE_CONFIG_CONTAINER_DIR:ro"
+                -e "OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_CONTAINER_DIR"
+            )
         fi
 
         "$CONTAINER_CLI" run -d \
@@ -100,6 +214,7 @@ start_container() {
             -v "$HOME_VOLUME:/home/dev" \
             "${ssh_args[@]}" \
             "${opencode_env_args[@]}" \
+            "${opencode_config_args[@]}" \
             -p 10012:10012 \
             -w /workspace \
             "$IMAGE" \
@@ -114,8 +229,12 @@ start_container() {
 
 exec_container() {
     local opencode_env_args=()
-    if [ -n "${DEVCONTAINER_GO_API_KEY:-}" ]; then
-        opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_GO_API_KEY")
+    if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ]; then
+        opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_OPENCODE_GO_API_KEY")
+    fi
+
+    if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
+        opencode_env_args+=(-e "OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_CONTAINER_DIR")
     fi
 
     "$CONTAINER_CLI" exec -it "${opencode_env_args[@]}" "$CONTAINER_NAME" "$@"
@@ -135,7 +254,12 @@ shell_container() {
     exec_container bash
 }
 
-start_agent() {
+agent() {
+    start_container >/dev/null
+    exec_container opencode
+}
+
+agent_serve() {
     start_container >/dev/null
     exec_container opencode serve --port 10012 --hostname "0.0.0.0"
 }
@@ -249,11 +373,33 @@ if [ "$#" -lt 1 ]; then
     exit 1
 fi
 
+case "$1" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+    help)
+        if [ "$#" -gt 2 ]; then
+            usage help
+            exit 1
+        fi
+
+        usage "${2:-help}"
+        exit 0
+        ;;
+esac
+
+if [ "$#" -ge 2 ] && { [ "$2" = "-h" ] || [ "$2" = "--help" ]; }; then
+    usage "$1"
+    exit 0
+fi
+
 COMMAND="$1"
 PROJECT_DIR=""
+OPENCODE_CONFIG_HOST_DIR=""
 
 case "$COMMAND" in
-    start|stop|restart|shell|start-agent|purge)
+    start|stop|restart|shell|agent|agent-serve|purge)
         if [ "$#" -ne 2 ]; then
             usage
             exit 1
@@ -284,6 +430,12 @@ if [ -n "$PROJECT_DIR" ]; then
 fi
 
 case "$COMMAND" in
+    start|restart|shell|agent|agent-serve)
+        configure_opencode_config_mount
+        ;;
+esac
+
+case "$COMMAND" in
     start)
         start_container
         ;;
@@ -297,8 +449,11 @@ case "$COMMAND" in
     shell)
         shell_container
         ;;
-    start-agent)
-        start_agent
+    agent)
+        agent
+        ;;
+    agent-serve)
+        agent_serve
         ;;
     purge)
         purge_container
