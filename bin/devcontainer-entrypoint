@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ] && [ -z "${OPENCODE_API_KEY:-}" ]; then
-    export OPENCODE_API_KEY="$DEVCONTAINER_OPENCODE_GO_API_KEY"
-fi
-
 opencode_config_dir="${OPENCODE_CONFIG_DIR:-/opt/opencode-config}"
 
 if [ -n "$opencode_config_dir" ]; then
