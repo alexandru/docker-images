@@ -20,6 +20,9 @@ CONTAINER_LABEL = "com.alexandru.docker-images.devcontainer=true"
 PROJECT_LABEL = "com.alexandru.docker-images.devcontainer.project"
 HOME_VOLUME_LABEL = "com.alexandru.docker-images.devcontainer.home-volume"
 OPENCODE_CONFIG_CONTAINER_DIR = "/opt/opencode-config"
+WORKSPACE_LINK = "/workspace"
+CONTAINER_USER = "dev"
+ROOT_USER = "root"
 
 AUTH_ENV_NAMES = (
     "302AI_API_KEY",
@@ -180,6 +183,39 @@ def project_path(path):
     return canonical_dir(path, "Project")
 
 
+def git_rev_parse_dir(project_dir, option):
+    try:
+        result = subprocess.run(
+            ["git", "-C", project_dir, "rev-parse", "--path-format=absolute", option],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return ""
+
+    if result.returncode != 0:
+        return ""
+
+    path = result.stdout.strip()
+    if not path:
+        return ""
+
+    return os.path.realpath(path)
+
+
+def project_mount_path(project_dir):
+    paths = [project_dir]
+
+    for option in ("--git-dir", "--git-common-dir"):
+        path = git_rev_parse_dir(project_dir, option)
+        if path:
+            paths.append(path)
+
+    return os.path.commonpath(paths)
+
+
 def opencode_config_path(path):
     return canonical_dir(path, "OpenCode config")
 
@@ -279,6 +315,9 @@ class DevContainer:
     def __init__(self, command, project_dir="", command_args=None, container_cli=None):
         self.command = command
         self.project_dir = project_dir
+        self.project_mount_dir = project_mount_path(project_dir) if project_dir else ""
+        self.project_container_dir = project_dir
+        self.project_container_mount_dir = self.project_mount_dir
         self.command_args = list(command_args or [])
         self.container_cli = container_cli or ""
         self.container_name = container_name(project_dir) if project_dir else ""
@@ -363,6 +402,17 @@ class DevContainer:
                 return normalize_container_path(mount.get("Source", ""))
         return ""
 
+    def container_project_mount_source(self):
+        container = self.inspect_object(self.container_name)
+        for mount in container.get("Mounts", []):
+            if mount.get("Destination") == self.project_container_mount_dir:
+                return normalize_container_path(mount.get("Source", ""))
+        return ""
+
+    def container_working_dir(self):
+        container = self.inspect_object(self.container_name)
+        return container.get("Config", {}).get("WorkingDir", "")
+
     def container_agent_ports(self):
         container = self.inspect_object(self.container_name)
         bindings = container.get("HostConfig", {}).get("PortBindings", {}).get("10012/tcp") or []
@@ -398,8 +448,34 @@ class DevContainer:
         print("Remove and recreate the container to apply DEVCONTAINER_AGENT_PORT.", file=sys.stderr)
         raise SystemExit(1)
 
+    def ensure_project_mount(self):
+        if self.container_project_mount_source() != self.project_mount_dir:
+            print(
+                "Container already exists with an outdated project mount.",
+                file=sys.stderr,
+            )
+            print(
+                f"Run `{sys.argv[0]} purge {shlex.quote(self.project_dir)}` and start it again "
+                "to mount the project at its full container path.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        if self.container_working_dir() != self.project_container_dir:
+            print(
+                "Container already exists with an outdated working directory.",
+                file=sys.stderr,
+            )
+            print(
+                f"Run `{sys.argv[0]} purge {shlex.quote(self.project_dir)}` and start it again "
+                f"to use {self.project_container_dir}.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
     def start_container(self, *, announce=True):
         if self.container_exists():
+            self.ensure_project_mount()
             self.ensure_opencode_config_mount()
             self.ensure_agent_port()
             self.run_cli(
@@ -451,6 +527,13 @@ class DevContainer:
 
         return ["-p", f"{self.agent_port}:10012"]
 
+    def workspace_link_command(self):
+        return (
+            f"rm -rf {WORKSPACE_LINK} && "
+            f"ln -s {shlex.quote(self.project_container_dir)} {WORKSPACE_LINK} && "
+            "exec sleep infinity"
+        )
+
     def run_new_container(self):
         self.run_cli(
             [
@@ -464,8 +547,10 @@ class DevContainer:
                 f"{PROJECT_LABEL}={self.project_dir}",
                 "--label",
                 f"{HOME_VOLUME_LABEL}={self.home_volume}",
+                "--user",
+                ROOT_USER,
                 "-v",
-                f"{self.project_dir}:/workspace",
+                f"{self.project_mount_dir}:{self.project_container_mount_dir}",
                 "-v",
                 f"{self.home_volume}:/home/dev",
                 *self.ssh_args(),
@@ -473,10 +558,11 @@ class DevContainer:
                 *self.opencode_config_mount_args(),
                 *self.agent_port_args(),
                 "-w",
-                "/workspace",
+                self.project_container_dir,
                 IMAGE,
-                "sleep",
-                "infinity",
+                "/bin/sh",
+                "-lc",
+                self.workspace_link_command(),
             ],
             stdout=subprocess.DEVNULL,
             check=True,
@@ -484,7 +570,9 @@ class DevContainer:
 
     def print_start_summary(self):
         print(f"Container: {self.container_name}")
-        print(f"Project:   {self.project_dir} -> /workspace")
+        print(f"Project:   {self.project_mount_dir} -> {self.project_container_mount_dir}")
+        print(f"Workdir:   {self.project_container_dir}")
+        print(f"Symlink:   {WORKSPACE_LINK} -> {self.project_container_dir}")
         print(f"Home:      {self.home_volume} -> /home/dev")
         print(
             "Shell:     "
@@ -496,6 +584,10 @@ class DevContainer:
             self.container_cli,
             "exec",
             "-it",
+            "-u",
+            CONTAINER_USER,
+            "-w",
+            self.project_container_dir,
             *self.container_env_args,
             self.container_name,
             "/usr/local/bin/devcontainer-entrypoint",
@@ -539,10 +631,12 @@ class DevContainer:
         print("  devcontainer:")
         print(f'    image: "${{DEVCONTAINER_IMAGE:-{DEFAULT_IMAGE}}}"')
         print(f"    container_name: {yaml_quote(self.container_name)}")
-        print("    working_dir: /workspace")
+        print(f"    user: {yaml_quote(ROOT_USER)}")
+        print(f"    working_dir: {yaml_quote(self.project_container_dir)}")
         print("    command:")
-        print("      - sleep")
-        print("      - infinity")
+        print("      - /bin/sh")
+        print("      - -lc")
+        print(f"      - {yaml_quote(self.workspace_link_command())}")
 
         if self.agent_port:
             print("    ports:")
@@ -575,8 +669,8 @@ class DevContainer:
     def compose_mounts(self):
         print("    volumes:")
         print("      - type: bind")
-        print(f"        source: {yaml_quote(self.project_dir)}")
-        print("        target: /workspace")
+        print(f"        source: {yaml_quote(self.project_mount_dir)}")
+        print(f"        target: {yaml_quote(self.project_container_mount_dir)}")
         print("      - type: volume")
         print("        source: home")
         print("        target: /home/dev")

@@ -50,9 +50,9 @@ RUN if getent group "$USER_GID" >/dev/null; then \
     fi && \
     echo "dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/dev && \
     chmod 0440 /etc/sudoers.d/dev && \
-    mkdir -p /etc/ssh/ssh_known_hosts.d /opt/sdkman /workspace /workspaces /home/dev/.config && \
+    mkdir -p /etc/ssh/ssh_known_hosts.d /opt/sdkman /workspaces /home/dev/.config && \
     ssh-keyscan github.com > /etc/ssh/ssh_known_hosts && \
-    chown -R dev:dev /opt/sdkman /workspace /workspaces /home/dev
+    chown -R dev:dev /opt/sdkman /workspaces /home/dev
 
 ENV SDKMAN_DIR=/opt/sdkman
 
@@ -101,8 +101,8 @@ RUN chmod 0755 /usr/local/bin/devcontainer-entrypoint /usr/local/bin/osc52-clipb
     chown -R dev:dev /home/dev/.config
 
 USER dev
-WORKDIR /workspace
-VOLUME ["/workspace", "/home/dev"]
+WORKDIR /home/dev
+VOLUME ["/home/dev"]
 EXPOSE 10012
 ENTRYPOINT ["/usr/local/bin/devcontainer-entrypoint"]
 CMD ["bash"]
