@@ -3,11 +3,9 @@ set -euo pipefail
 
 opencode_config_dir="${OPENCODE_CONFIG_DIR:-/opt/opencode-config}"
 
-if [ -n "$opencode_config_dir" ]; then
-    case ":$PATH:" in
-        *":$opencode_config_dir/bin:"*) ;;
-        *) export PATH="$opencode_config_dir/bin:$PATH" ;;
-    esac
-fi
+case ":$PATH:" in
+    *":$opencode_config_dir/bin:"*) ;;
+    *) export PATH="$opencode_config_dir/bin:$PATH" ;;
+esac
 
 exec "$@"

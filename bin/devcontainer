@@ -241,10 +241,10 @@ def configured_auth_envs():
 
 
 def auth_environment_help():
-    lines = []
-    for name in AUTH_ENV_NAMES:
-        lines.append(f"  {auth_env_name(name):<48} Forwarded as {name}.")
-    return "\n".join(lines)
+    return "\n".join(
+        f"  {auth_env_name(name):<48} Forwarded as {name}."
+        for name in AUTH_ENV_NAMES
+    )
 
 
 def has_ssh_auth_sock():
@@ -556,20 +556,14 @@ class DevContainer:
         self.compose_environment()
         self.compose_mounts()
 
-    def compose_has_environment(self):
-        return bool(
-            configured_auth_envs()
-            or self.opencode_config_host_dir
-            or has_ssh_auth_sock()
-        )
-
     def compose_environment(self):
-        if not self.compose_has_environment():
+        auth_envs = configured_auth_envs()
+        if not (auth_envs or self.opencode_config_host_dir or has_ssh_auth_sock()):
             return
 
         print("    environment:")
 
-        for target, (source, _) in configured_auth_envs().items():
+        for target, (source, _) in auth_envs.items():
             print(f'      {target}: "${{{source}}}"')
 
         if self.opencode_config_host_dir:
@@ -659,27 +653,22 @@ class DevContainer:
                 ordered_add(volume_names, mount.get("Name", ""))
 
     def purge_volume(self, volume_name):
-        if (
-            self.run_cli(
-                ["volume", "inspect", volume_name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ).returncode
-            == 0
-        ):
-            if (
-                self.run_cli(
-                    ["volume", "rm", "-f", volume_name],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                ).returncode
-                == 0
-            ):
-                print(f"Deleted volume: {volume_name}")
-            else:
-                print(f"Failed to delete volume: {volume_name}", file=sys.stderr)
-        else:
+        if self.run_cli(
+            ["volume", "inspect", volume_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode != 0:
             print(f"Volume does not exist: {volume_name}")
+            return
+
+        if self.run_cli(
+            ["volume", "rm", "-f", volume_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        ).returncode == 0:
+            print(f"Deleted volume: {volume_name}")
+        else:
+            print(f"Failed to delete volume: {volume_name}", file=sys.stderr)
 
     def purge_volumes(self, volume_names):
         if not volume_names:
@@ -741,6 +730,17 @@ def build_parser():
         command_parser.add_argument("project_directory")
         return command_parser
 
+    def add_passthrough_command(name, help_text):
+        command_parser = subparsers.add_parser(
+            name,
+            add_help=False,
+            help=help_text,
+            description=help_text,
+        )
+        command_parser.add_argument("project_directory")
+        command_parser.add_argument("command_args", nargs=argparse.REMAINDER)
+        return command_parser
+
     add_project_command("start", "Start the devcontainer for a project.")
     add_project_command("stop", "Stop the devcontainer for a project.")
     add_project_command("restart", "Stop and start the devcontainer for a project.")
@@ -749,23 +749,15 @@ def build_parser():
     add_project_command("agent-serve", "Start the opencode server in the project devcontainer, starting the container first if needed.")
     add_project_command("purge", "Delete the project devcontainer. The shared /home/dev volume is kept.")
 
-    exec_parser = subparsers.add_parser(
+    add_passthrough_command(
         "exec",
-        add_help=False,
-        help="Run a command in the project devcontainer, starting it first if needed.",
-        description="Run a command in the project devcontainer, starting it first if needed.",
+        "Run a command in the project devcontainer, starting it first if needed.",
     )
-    exec_parser.add_argument("project_directory")
-    exec_parser.add_argument("command_args", nargs=argparse.REMAINDER)
 
-    agent_parser = subparsers.add_parser(
+    add_passthrough_command(
         "agent",
-        add_help=False,
-        help="Start opencode in the project devcontainer, starting the container first if needed.",
-        description="Start opencode in the project devcontainer, starting the container first if needed.",
+        "Start opencode in the project devcontainer, starting the container first if needed.",
     )
-    agent_parser.add_argument("project_directory")
-    agent_parser.add_argument("command_args", nargs=argparse.REMAINDER)
 
     subparsers.add_parser(
         "purge-all",
