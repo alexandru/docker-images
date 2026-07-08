@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "simplify": {
+      "source": "alexandru/skills",
+      "sourceType": "github",
+      "skillPath": "skills/simplify/SKILL.md",
+      "computedHash": "c1c25910819652a25ac68063fcf663ba9392d19bcd58d153a1a8fcc92b6721ee"
+    }
+  }
+}
