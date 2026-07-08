@@ -102,26 +102,24 @@ find_container_cli() {
     return 1
 }
 
-project_path() {
+canonical_dir() {
     local path="$1"
+    local description="$2"
 
     if [ ! -d "$path" ]; then
-        printf 'Project directory does not exist: %s\n' "$path" >&2
+        printf '%s directory does not exist: %s\n' "$description" "$path" >&2
         exit 1
     fi
 
     cd "$path" && pwd -P
 }
 
+project_path() {
+    canonical_dir "$1" "Project"
+}
+
 opencode_config_path() {
-    local path="$1"
-
-    if [ ! -d "$path" ]; then
-        printf 'OpenCode config directory does not exist: %s\n' "$path" >&2
-        exit 1
-    fi
-
-    cd "$path" && pwd -P
+    canonical_dir "$1" "OpenCode config"
 }
 
 project_token() {
@@ -162,6 +160,18 @@ configure_opencode_config_mount() {
     fi
 }
 
+configure_container_env_args() {
+    CONTAINER_ENV_ARGS=()
+
+    if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ]; then
+        CONTAINER_ENV_ARGS+=(-e "OPENCODE_API_KEY=$DEVCONTAINER_OPENCODE_GO_API_KEY")
+    fi
+
+    if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
+        CONTAINER_ENV_ARGS+=(-e "OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_CONTAINER_DIR")
+    fi
+}
+
 container_opencode_config_source() {
     "$CONTAINER_CLI" inspect \
         --format "{{range .Mounts}}{{if eq .Destination \"$OPENCODE_CONFIG_CONTAINER_DIR\"}}{{println .Source}}{{end}}{{end}}" \
@@ -198,16 +208,10 @@ start_container() {
             ssh_args=(-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
         fi
 
-        local opencode_env_args=()
-        if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ]; then
-            opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_OPENCODE_GO_API_KEY")
-        fi
-
         local opencode_config_args=()
         if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
             opencode_config_args=(
                 -v "$OPENCODE_CONFIG_HOST_DIR:$OPENCODE_CONFIG_CONTAINER_DIR:ro"
-                -e "OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_CONTAINER_DIR"
             )
         fi
 
@@ -219,7 +223,7 @@ start_container() {
             -v "$PROJECT_DIR:/workspace" \
             -v "$HOME_VOLUME:/home/dev" \
             "${ssh_args[@]}" \
-            "${opencode_env_args[@]}" \
+            "${CONTAINER_ENV_ARGS[@]}" \
             "${opencode_config_args[@]}" \
             -p 10012:10012 \
             -w /workspace \
@@ -234,16 +238,7 @@ start_container() {
 }
 
 exec_container() {
-    local opencode_env_args=()
-    if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ]; then
-        opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_OPENCODE_GO_API_KEY")
-    fi
-
-    if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
-        opencode_env_args+=(-e "OPENCODE_CONFIG_DIR=$OPENCODE_CONFIG_CONTAINER_DIR")
-    fi
-
-    "$CONTAINER_CLI" exec -it "${opencode_env_args[@]}" "$CONTAINER_NAME" "$@"
+    "$CONTAINER_CLI" exec -it "${CONTAINER_ENV_ARGS[@]}" "$CONTAINER_NAME" "$@"
 }
 
 stop_container() {
@@ -256,23 +251,24 @@ stop_container() {
 }
 
 shell_container() {
-    start_container >/dev/null
-    exec_container bash
+    run_in_container bash
 }
 
 agent() {
-    start_container >/dev/null
-    exec_container opencode "${AGENT_ARGS[@]}"
+    run_in_container opencode "${COMMAND_ARGS[@]}"
 }
 
 agent_switch() {
-    start_container >/dev/null
-    exec_container oc-switch "${AGENT_SWITCH_ARGS[@]}"
+    run_in_container oc-switch "${COMMAND_ARGS[@]}"
 }
 
 agent_serve() {
+    run_in_container opencode serve --port 10012 --hostname "0.0.0.0"
+}
+
+run_in_container() {
     start_container >/dev/null
-    exec_container opencode serve --port 10012 --hostname "0.0.0.0"
+    exec_container "$@"
 }
 
 purge_container() {
@@ -302,12 +298,14 @@ add_container_ids() {
 add_volume_name() {
     local volume_name="$1"
 
-    if [ -n "$volume_name" ]; then
-        case " ${VOLUME_NAMES[*]} " in
-            *" $volume_name "*) ;;
-            *) VOLUME_NAMES+=("$volume_name") ;;
-        esac
+    if [ -z "$volume_name" ]; then
+        return 0
     fi
+
+    case " ${VOLUME_NAMES[*]} " in
+        *" $volume_name "*) ;;
+        *) VOLUME_NAMES+=("$volume_name") ;;
+    esac
 }
 
 add_volume_names() {
@@ -408,8 +406,8 @@ fi
 COMMAND="$1"
 PROJECT_DIR=""
 OPENCODE_CONFIG_HOST_DIR=""
-AGENT_ARGS=()
-AGENT_SWITCH_ARGS=()
+COMMAND_ARGS=()
+CONTAINER_ENV_ARGS=()
 
 case "$COMMAND" in
     start|stop|restart|shell|agent-serve|purge)
@@ -427,7 +425,7 @@ case "$COMMAND" in
         fi
 
         PROJECT_DIR="$(project_path "$2")"
-        AGENT_ARGS=("${@:3}")
+        COMMAND_ARGS=("${@:3}")
         ;;
     agent-switch)
         if [ "$#" -lt 3 ]; then
@@ -436,7 +434,7 @@ case "$COMMAND" in
         fi
 
         PROJECT_DIR="$(project_path "$2")"
-        AGENT_SWITCH_ARGS=("${@:3}")
+        COMMAND_ARGS=("${@:3}")
         ;;
     purge-all)
         if [ "$#" -ne 1 ]; then
@@ -465,6 +463,8 @@ case "$COMMAND" in
         configure_opencode_config_mount
         ;;
 esac
+
+configure_container_env_args
 
 case "$COMMAND" in
     start)
