@@ -27,7 +27,7 @@ Open a shell in the container, starting it first if needed:
 ./bin/devcontainer shell /path/to/project
 ```
 
-The script uses the first available CLI from `wslc.exe`, `wslc`, `docker`, or `podman`. It mounts the project at `/workspace` and persists `/home/dev` in a shared named volume, so settings applied after startup (for example opencode authentication) are available to every devcontainer.
+The script uses the first available CLI from `wslc.exe`, `wslc`, `docker`, or `podman`. It mounts the project at `/workspace` and persists `/home/dev` in a named volume per workspace.
 
 Stop or restart the container for the same project:
 
@@ -36,13 +36,13 @@ Stop or restart the container for the same project:
 ./bin/devcontainer restart /path/to/project
 ```
 
-Delete only the container for a project, keeping the shared `/home/dev` volume:
+Delete the container and `/home/dev` volume for a project:
 
 ```sh
 ./bin/devcontainer purge /path/to/project
 ```
 
-Delete all devcontainer containers, the shared `/home/dev` volume, and the devcontainer image:
+Delete all devcontainer containers and their `/home/dev` volumes without deleting the image:
 
 ```sh
 ./bin/devcontainer purge-all
@@ -57,7 +57,7 @@ For VS Code Dev Containers:
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "mounts": [
-    "source=jdk-build-tools-devcontainer-home,target=/home/dev,type=volume"
+    "source=jdk-build-tools-devcontainer-home-${localWorkspaceFolderBasename},target=/home/dev,type=volume"
   ]
 }
 ```

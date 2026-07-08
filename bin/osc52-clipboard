@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+program="${0##*/}"
+
+usage() {
+    printf 'OSC52 clipboard wrapper for wl-copy, xclip, and xsel copy operations.\n' >&2
+    printf 'Clipboard read/output modes are not supported.\n' >&2
+}
+
+unsupported_read() {
+    printf '%s: clipboard read/output is not supported by this OSC52 wrapper\n' "$program" >&2
+    exit 1
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help|-help)
+            usage
+            exit 0
+            ;;
+        -version|--version)
+            printf '%s (OSC52 clipboard wrapper)\n' "$program"
+            exit 0
+            ;;
+    esac
+
+    case "$program:$arg" in
+        xclip:-o|xclip:-out|xclip:--out|xsel:-o|xsel:--output)
+            unsupported_read
+            ;;
+    esac
+done
+
+data="$(base64 | tr -d '\n')"
+
+emit_sequence() {
+    if [ -n "${TMUX:-}" ] || [ -n "${STY:-}" ]; then
+        printf '\033Ptmux;\033\033]52;c;%s\a\033\\' "$data"
+    else
+        printf '\033]52;c;%s\a' "$data"
+    fi
+}
+
+if [ -n "${TTY:-}" ] && [ -w "$TTY" ] && emit_sequence 2>/dev/null >"$TTY"; then
+    exit 0
+fi
+
+if emit_sequence 2>/dev/null >/dev/tty; then
+    exit 0
+fi
+
+emit_sequence

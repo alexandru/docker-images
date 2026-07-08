@@ -91,8 +91,12 @@ RUN cp /tmp/opencode-home/.opencode/bin/opencode /usr/local/bin/opencode && \
     rm -rf /tmp/opencode-home
 
 COPY bin/devcontainer-entrypoint /usr/local/bin/devcontainer-entrypoint
+COPY bin/osc52-clipboard /usr/local/bin/osc52-clipboard
 COPY --chown=dev:dev .build/opencode-config /usr/local/share/opencode-config
-RUN chmod 0755 /usr/local/bin/devcontainer-entrypoint && \
+RUN chmod 0755 /usr/local/bin/devcontainer-entrypoint /usr/local/bin/osc52-clipboard && \
+    ln -sf /usr/local/bin/osc52-clipboard /usr/local/bin/wl-copy && \
+    ln -sf /usr/local/bin/osc52-clipboard /usr/local/bin/xclip && \
+    ln -sf /usr/local/bin/osc52-clipboard /usr/local/bin/xsel && \
     printf '\nexport SDKMAN_DIR=/opt/sdkman\n[ -s "$SDKMAN_DIR/bin/sdkman-init.sh" ] && source "$SDKMAN_DIR/bin/sdkman-init.sh"\n' >> /etc/bash.bashrc && \
     mkdir -p /home/dev/.config/opencode && \
     cp -a /usr/local/share/opencode-config/. /home/dev/.config/opencode/ && \

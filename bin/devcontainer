@@ -2,13 +2,15 @@
 set -euo pipefail
 
 IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:latest}"
-HOME_VOLUME="${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}"
+HOME_VOLUME_PREFIX="${DEVCONTAINER_HOME_VOLUME_PREFIX:-${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}-}"
 CONTAINER_PREFIX="jdk-build-tools-dev-"
 CONTAINER_LABEL="com.alexandru.docker-images.devcontainer=true"
 
 usage() {
     printf 'Usage: %s {start|stop|restart|shell|start-agent|purge} <project-directory>\n' "$0" >&2
     printf '       %s purge-all\n' "$0" >&2
+    printf '\nEnvironment:\n' >&2
+    printf '  DEVCONTAINER_GO_API_KEY  Optional OpenCode Go API key forwarded into the container.\n' >&2
 }
 
 find_container_cli() {
@@ -38,7 +40,7 @@ project_path() {
     cd "$path" && pwd -P
 }
 
-container_name() {
+project_token() {
     local project_dir="$1"
     local base slug checksum
 
@@ -51,7 +53,19 @@ container_name() {
         slug="project"
     fi
 
-    printf '%s%s-%s\n' "$CONTAINER_PREFIX" "$slug" "$checksum"
+    printf '%s-%s\n' "$slug" "$checksum"
+}
+
+container_name() {
+    local project_dir="$1"
+
+    printf '%s%s\n' "$CONTAINER_PREFIX" "$(project_token "$project_dir")"
+}
+
+home_volume() {
+    local project_dir="$1"
+
+    printf '%s%s\n' "$HOME_VOLUME_PREFIX" "$(project_token "$project_dir")"
 }
 
 container_exists() {
@@ -62,20 +76,30 @@ start_container() {
     if container_exists; then
         "$CONTAINER_CLI" start "$CONTAINER_NAME" >/dev/null 2>&1 || true
     else
-        "$CONTAINER_CLI" volume create "$HOME_VOLUME" >/dev/null 2>&1 || true
+        "$CONTAINER_CLI" volume create \
+            --label "$CONTAINER_LABEL" \
+            --label "com.alexandru.docker-images.devcontainer.project=$PROJECT_DIR" \
+            "$HOME_VOLUME" >/dev/null 2>&1 || true
 
         local ssh_args=()
         if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
             ssh_args=(-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e "SSH_AUTH_SOCK=$SSH_AUTH_SOCK")
         fi
 
+        local opencode_env_args=()
+        if [ -n "${DEVCONTAINER_GO_API_KEY:-}" ]; then
+            opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_GO_API_KEY")
+        fi
+
         "$CONTAINER_CLI" run -d \
             --name "$CONTAINER_NAME" \
             --label "$CONTAINER_LABEL" \
             --label "com.alexandru.docker-images.devcontainer.project=$PROJECT_DIR" \
+            --label "com.alexandru.docker-images.devcontainer.home-volume=$HOME_VOLUME" \
             -v "$PROJECT_DIR:/workspace" \
             -v "$HOME_VOLUME:/home/dev" \
             "${ssh_args[@]}" \
+            "${opencode_env_args[@]}" \
             -p 10012:10012 \
             -w /workspace \
             "$IMAGE" \
@@ -86,6 +110,15 @@ start_container() {
     printf 'Project:   %s -> /workspace\n' "$PROJECT_DIR"
     printf 'Home:      %s -> /home/dev\n' "$HOME_VOLUME"
     printf 'Shell:     %q exec -it %q bash\n' "$CONTAINER_CLI" "$CONTAINER_NAME"
+}
+
+exec_container() {
+    local opencode_env_args=()
+    if [ -n "${DEVCONTAINER_GO_API_KEY:-}" ]; then
+        opencode_env_args=(-e "OPENCODE_API_KEY=$DEVCONTAINER_GO_API_KEY")
+    fi
+
+    "$CONTAINER_CLI" exec -it "${opencode_env_args[@]}" "$CONTAINER_NAME" "$@"
 }
 
 stop_container() {
@@ -99,12 +132,12 @@ stop_container() {
 
 shell_container() {
     start_container >/dev/null
-    "$CONTAINER_CLI" exec -it "$CONTAINER_NAME" bash
+    exec_container bash
 }
 
 start_agent() {
     start_container >/dev/null
-    "$CONTAINER_CLI" exec -it "$CONTAINER_NAME" opencode serve --port 10012 --hostname "0.0.0.0"
+    exec_container opencode serve --port 10012 --hostname "0.0.0.0"
 }
 
 purge_container() {
@@ -114,6 +147,8 @@ purge_container() {
     else
         printf 'Container does not exist: %s\n' "$CONTAINER_NAME"
     fi
+
+    purge_volume "$HOME_VOLUME"
 }
 
 add_container_ids() {
@@ -129,11 +164,75 @@ add_container_ids() {
     done < <("$CONTAINER_CLI" ps -aq --filter "$1" 2>/dev/null || true)
 }
 
+add_volume_name() {
+    local volume_name="$1"
+
+    if [ -n "$volume_name" ]; then
+        case " ${VOLUME_NAMES[*]} " in
+            *" $volume_name "*) ;;
+            *) VOLUME_NAMES+=("$volume_name") ;;
+        esac
+    fi
+}
+
+add_volume_names() {
+    local volume_name
+
+    while IFS= read -r volume_name; do
+        add_volume_name "$volume_name"
+    done < <("$CONTAINER_CLI" volume ls -q --filter "$1" 2>/dev/null || true)
+}
+
+add_container_home_volumes() {
+    local container_id="$1"
+    local volume_name
+
+    while IFS= read -r volume_name; do
+        add_volume_name "$volume_name"
+    done < <("$CONTAINER_CLI" inspect --format '{{range .Mounts}}{{if eq .Destination "/home/dev"}}{{println .Name}}{{end}}{{end}}' "$container_id" 2>/dev/null || true)
+}
+
+purge_volume() {
+    local volume_name="$1"
+
+    if "$CONTAINER_CLI" volume inspect "$volume_name" >/dev/null 2>&1; then
+        if "$CONTAINER_CLI" volume rm -f "$volume_name" >/dev/null 2>&1; then
+            printf 'Deleted volume: %s\n' "$volume_name"
+        else
+            printf 'Failed to delete volume: %s\n' "$volume_name" >&2
+        fi
+    else
+        printf 'Volume does not exist: %s\n' "$volume_name"
+    fi
+}
+
+purge_volumes() {
+    local volume_name
+
+    if [ "${#VOLUME_NAMES[@]}" -eq 0 ]; then
+        printf 'No devcontainer volumes found.\n'
+        return 0
+    fi
+
+    for volume_name in "${VOLUME_NAMES[@]}"; do
+        purge_volume "$volume_name"
+    done
+}
+
 purge_all() {
     local CONTAINER_IDS=()
+    local VOLUME_NAMES=()
+    local container_id
 
+    add_container_ids "ancestor=$IMAGE"
     add_container_ids "label=$CONTAINER_LABEL"
-    add_container_ids "name=^/${CONTAINER_PREFIX}"
+
+    for container_id in "${CONTAINER_IDS[@]}"; do
+        add_container_home_volumes "$container_id"
+    done
+
+    add_volume_names "label=$CONTAINER_LABEL"
+    add_volume_names "name=$HOME_VOLUME_PREFIX"
 
     if [ "${#CONTAINER_IDS[@]}" -gt 0 ]; then
         "$CONTAINER_CLI" rm -f "${CONTAINER_IDS[@]}" >/dev/null 2>&1 || true
@@ -142,19 +241,7 @@ purge_all() {
         printf 'No devcontainer containers found.\n'
     fi
 
-    if "$CONTAINER_CLI" volume inspect "$HOME_VOLUME" >/dev/null 2>&1; then
-        "$CONTAINER_CLI" volume rm -f "$HOME_VOLUME" >/dev/null 2>&1 || true
-        printf 'Deleted volume: %s\n' "$HOME_VOLUME"
-    else
-        printf 'Volume does not exist: %s\n' "$HOME_VOLUME"
-    fi
-
-    if "$CONTAINER_CLI" image inspect "$IMAGE" >/dev/null 2>&1; then
-        "$CONTAINER_CLI" rmi -f "$IMAGE" >/dev/null 2>&1 || true
-        printf 'Deleted image: %s\n' "$IMAGE"
-    else
-        printf 'Image does not exist: %s\n' "$IMAGE"
-    fi
+    purge_volumes
 }
 
 if [ "$#" -lt 1 ]; then
@@ -193,6 +280,7 @@ CONTAINER_CLI="$(find_container_cli)" || {
 
 if [ -n "$PROJECT_DIR" ]; then
     CONTAINER_NAME="$(container_name "$PROJECT_DIR")"
+    HOME_VOLUME="$(home_volume "$PROJECT_DIR")"
 fi
 
 case "$COMMAND" in
