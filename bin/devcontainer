@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DEFAULT_IMAGE="ghcr.io/alexandru/jdk-build-tools-devcontainer:latest"
+DEFAULT_AGENT_PORT="10012"
 IMAGE="${DEVCONTAINER_IMAGE:-$DEFAULT_IMAGE}"
 HOME_VOLUME_PREFIX="${DEVCONTAINER_HOME_VOLUME_PREFIX:-${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}-}"
 CONTAINER_PREFIX="jdk-build-tools-dev-"
@@ -88,6 +89,7 @@ usage() {
     printf '\nEnvironment:\n' >&2
     printf '  CONTAINER_CLI                     Container CLI to use. Defaults to first available wslc.exe, wslc, docker, or podman.\n' >&2
     printf '  DEVCONTAINER_IMAGE                Image to run. Defaults to %s.\n' "$IMAGE" >&2
+    printf '  DEVCONTAINER_AGENT_PORT           Optional host port for container port 10012; agent-serve defaults to %s.\n' "$DEFAULT_AGENT_PORT" >&2
     printf '  DEVCONTAINER_HOME_VOLUME_PREFIX   Prefix for per-workspace /home/dev volumes. Defaults to %s.\n' "$HOME_VOLUME_PREFIX" >&2
     printf '  DEVCONTAINER_OPENCODE_GO_API_KEY  Optional OpenCode Go API key forwarded into the container.\n' >&2
     printf '  DEVCONTAINER_OPENCODE_CONFIG_DIR  Optional host config directory mounted read-only; sets OPENCODE_CONFIG_DIR=%s inside the container.\n' "$OPENCODE_CONFIG_CONTAINER_DIR" >&2
@@ -191,9 +193,23 @@ configure_container_env_args() {
     fi
 }
 
+configure_agent_port() {
+    AGENT_PORT="${DEVCONTAINER_AGENT_PORT:-}"
+
+    if [ "$COMMAND" = "agent-serve" ] && [ -z "$AGENT_PORT" ]; then
+        AGENT_PORT="$DEFAULT_AGENT_PORT"
+    fi
+}
+
 container_opencode_config_source() {
     "$CONTAINER_CLI" inspect \
         --format "{{range .Mounts}}{{if eq .Destination \"$OPENCODE_CONFIG_CONTAINER_DIR\"}}{{println .Source}}{{end}}{{end}}" \
+        "$CONTAINER_NAME" 2>/dev/null || true
+}
+
+container_agent_ports() {
+    "$CONTAINER_CLI" inspect \
+        --format '{{range $port, $bindings := .HostConfig.PortBindings}}{{if eq $port "10012/tcp"}}{{range $bindings}}{{println .HostPort}}{{end}}{{end}}{{end}}' \
         "$CONTAINER_NAME" 2>/dev/null || true
 }
 
@@ -212,9 +228,28 @@ ensure_opencode_config_mount() {
     fi
 }
 
+ensure_agent_port() {
+    local port
+
+    if [ -z "$AGENT_PORT" ]; then
+        return 0
+    fi
+
+    while IFS= read -r port; do
+        if [ "$port" = "$AGENT_PORT" ]; then
+            return 0
+        fi
+    done < <(container_agent_ports)
+
+    printf 'Container already exists without host port %s mapped to container port 10012.\n' "$AGENT_PORT" >&2
+    printf 'Remove and recreate the container to apply DEVCONTAINER_AGENT_PORT.\n' >&2
+    exit 1
+}
+
 start_container() {
     if container_exists; then
         ensure_opencode_config_mount
+        ensure_agent_port
         "$CONTAINER_CLI" start "$CONTAINER_NAME" >/dev/null 2>&1 || true
     else
         "$CONTAINER_CLI" volume create \
@@ -234,6 +269,11 @@ start_container() {
             )
         fi
 
+        local agent_port_args=()
+        if [ -n "$AGENT_PORT" ]; then
+            agent_port_args=(-p "$AGENT_PORT:10012")
+        fi
+
         "$CONTAINER_CLI" run -d \
             --name "$CONTAINER_NAME" \
             --label "$CONTAINER_LABEL" \
@@ -244,7 +284,7 @@ start_container() {
             "${ssh_args[@]}" \
             "${CONTAINER_ENV_ARGS[@]}" \
             "${opencode_config_args[@]}" \
-            -p 10012:10012 \
+            "${agent_port_args[@]}" \
             -w /workspace \
             "$IMAGE" \
             sleep infinity >/dev/null
@@ -304,8 +344,12 @@ compose_service() {
     printf '    command:\n'
     printf '      - sleep\n'
     printf '      - infinity\n'
-    printf '    ports:\n'
-    printf '      - "10012:10012"\n'
+
+    if [ -n "$AGENT_PORT" ]; then
+        printf '    ports:\n'
+        printf '      - "${DEVCONTAINER_AGENT_PORT}:10012"\n'
+    fi
+
     printf '    labels:\n'
     printf '      com.alexandru.docker-images.devcontainer: "true"\n'
     printf '      com.alexandru.docker-images.devcontainer.project: %s\n' "$(yaml_quote "$PROJECT_DIR")"
@@ -506,6 +550,7 @@ fi
 COMMAND="$1"
 PROJECT_DIR=""
 OPENCODE_CONFIG_HOST_DIR=""
+AGENT_PORT=""
 COMMAND_ARGS=()
 CONTAINER_ENV_ARGS=()
 
@@ -559,6 +604,7 @@ case "$COMMAND" in
         ;;
 esac
 
+configure_agent_port
 configure_container_env_args
 
 if [ "$COMMAND" != "compose" ]; then
