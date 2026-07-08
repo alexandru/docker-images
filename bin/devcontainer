@@ -313,7 +313,7 @@ class DevContainer:
 
         return [
             "-v",
-            f"{self.opencode_config_host_dir}:{OPENCODE_CONFIG_CONTAINER_DIR}:ro",
+            f"{self.opencode_config_host_dir}:{OPENCODE_CONFIG_CONTAINER_DIR}",
         ]
 
     def agent_port_args(self):
@@ -462,7 +462,6 @@ class DevContainer:
             print("      - type: bind")
             print('        source: "${DEVCONTAINER_OPENCODE_CONFIG_DIR}"')
             print(f"        target: {yaml_quote(OPENCODE_CONFIG_CONTAINER_DIR)}")
-            print("        read_only: true")
 
         if has_ssh_auth_sock():
             print("      - type: bind")
@@ -585,6 +584,9 @@ class DevContainer:
 
         self.purge_volumes(volume_names)
 
+    def update_image(self):
+        self.run_cli(["pull", IMAGE], check=True)
+
 
 ENVIRONMENT_HELP = f"""
 Environment:
@@ -594,7 +596,7 @@ Environment:
   DEVCONTAINER_HOME_VOLUME          Shared /home/dev volume name. Defaults to {HOME_VOLUME_NAME}.
   DEVCONTAINER_HOME_VOLUME_PREFIX   Legacy per-workspace /home/dev volume prefix removed by purge-all. Defaults to {LEGACY_HOME_VOLUME_PREFIX}.
   DEVCONTAINER_OPENCODE_GO_API_KEY  Optional OpenCode Go API key forwarded into the container.
-  DEVCONTAINER_OPENCODE_CONFIG_DIR  Optional host config directory mounted read-only; sets OPENCODE_CONFIG_DIR={OPENCODE_CONFIG_CONTAINER_DIR} inside the container.
+  DEVCONTAINER_OPENCODE_CONFIG_DIR  Optional host config directory mounted read-write; sets OPENCODE_CONFIG_DIR={OPENCODE_CONFIG_CONTAINER_DIR} inside the container.
 """
 
 
@@ -649,6 +651,13 @@ def build_parser():
     )
     command_parsers["purge-all"] = purge_all_parser
 
+    update_parser = subparsers.add_parser(
+        "update",
+        help="Pull the devcontainer image.",
+        description="Pull the configured devcontainer image using the selected container CLI.",
+    )
+    command_parsers["update"] = update_parser
+
     help_parser = subparsers.add_parser("help", help="Show this help or help for a command.")
     help_parser.add_argument("help_command", nargs="?", choices=sorted(command_parsers))
     command_parsers["help"] = help_parser
@@ -681,6 +690,7 @@ def dispatch(devcontainer):
         "agent-serve": devcontainer.agent_serve,
         "purge": devcontainer.purge_container,
         "purge-all": devcontainer.purge_all,
+        "update": devcontainer.update_image,
     }
 
     try:
