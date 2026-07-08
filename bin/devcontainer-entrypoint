@@ -5,4 +5,11 @@ if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ] && [ -z "${OPENCODE_API_KEY:-}
     export OPENCODE_API_KEY="$DEVCONTAINER_OPENCODE_GO_API_KEY"
 fi
 
+if [ -n "${OPENCODE_CONFIG_DIR:-}" ]; then
+    case ":$PATH:" in
+        *":$OPENCODE_CONFIG_DIR/bin:"*) ;;
+        *) export PATH="$OPENCODE_CONFIG_DIR/bin:$PATH" ;;
+    esac
+fi
+
 exec "$@"

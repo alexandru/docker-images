@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${DEVCONTAINER_IMAGE:-ghcr.io/alexandru/jdk-build-tools-devcontainer:latest}"
+DEFAULT_IMAGE="ghcr.io/alexandru/jdk-build-tools-devcontainer:latest"
+IMAGE="${DEVCONTAINER_IMAGE:-$DEFAULT_IMAGE}"
 HOME_VOLUME_PREFIX="${DEVCONTAINER_HOME_VOLUME_PREFIX:-${DEVCONTAINER_HOME_VOLUME:-jdk-build-tools-devcontainer-home}-}"
 CONTAINER_PREFIX="jdk-build-tools-dev-"
 CONTAINER_LABEL="com.alexandru.docker-images.devcontainer=true"
@@ -27,13 +28,17 @@ usage() {
             printf 'Usage: %s shell <project-directory>\n' "$0" >&2
             printf '\nOpen an interactive shell in the project devcontainer, starting it first if needed.\n' >&2
             ;;
+        exec)
+            printf 'Usage: %s exec <project-directory> <command> [argument ...]\n' "$0" >&2
+            printf '\nRun a command in the project devcontainer, starting it first if needed.\n' >&2
+            ;;
+        compose)
+            printf 'Usage: %s compose <project-directory>\n' "$0" >&2
+            printf '\nPrint a docker-compose.yaml for the project devcontainer to stdout.\n' >&2
+            ;;
         agent)
             printf 'Usage: %s agent <project-directory> [opencode-argument ...]\n' "$0" >&2
             printf '\nStart opencode in the project devcontainer, starting the container first if needed.\n' >&2
-            ;;
-        agent-switch)
-            printf 'Usage: %s agent-switch <project-directory> <switch-argument> [switch-argument ...]\n' "$0" >&2
-            printf '\nRun oc-switch in the project devcontainer, starting the container first if needed.\n' >&2
             ;;
         agent-serve)
             printf 'Usage: %s agent-serve <project-directory>\n' "$0" >&2
@@ -53,8 +58,9 @@ usage() {
             printf '  %s stop <project-directory>\n' "$0" >&2
             printf '  %s restart <project-directory>\n' "$0" >&2
             printf '  %s shell <project-directory>\n' "$0" >&2
+            printf '  %s exec <project-directory> <command> [argument ...]\n' "$0" >&2
+            printf '  %s compose <project-directory>\n' "$0" >&2
             printf '  %s agent <project-directory> [opencode-argument ...]\n' "$0" >&2
-            printf '  %s agent-switch <project-directory> <switch-argument> [switch-argument ...]\n' "$0" >&2
             printf '  %s agent-serve <project-directory>\n' "$0" >&2
             printf '  %s purge <project-directory>\n' "$0" >&2
             printf '  %s purge-all\n' "$0" >&2
@@ -64,9 +70,10 @@ usage() {
             printf '  stop         Stop the project devcontainer.\n' >&2
             printf '  restart      Stop and start the project devcontainer.\n' >&2
             printf '  shell        Open a shell in the project devcontainer.\n' >&2
+            printf '  exec         Run a command in the project devcontainer.\n' >&2
+            printf '  compose      Print a docker-compose.yaml for the project devcontainer.\n' >&2
             printf '  agent        Start opencode in the project devcontainer.\n' >&2
-            printf '  agent-switch  Run oc-switch in the project devcontainer.\n' >&2
-            printf '  agent-serve   Start the opencode server in the project devcontainer.\n' >&2
+            printf '  agent-serve  Start the opencode server in the project devcontainer.\n' >&2
             printf '  purge        Delete the project devcontainer and volume.\n' >&2
             printf '  purge-all    Delete all devcontainer containers and volumes.\n' >&2
             printf '  help         Show this help or help for a command.\n' >&2
@@ -148,6 +155,14 @@ home_volume() {
     local project_dir="$1"
 
     printf '%s%s\n' "$HOME_VOLUME_PREFIX" "$(project_token "$project_dir")"
+}
+
+yaml_quote() {
+    local value="$1"
+
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    printf '"%s"' "$value"
 }
 
 container_exists() {
@@ -238,7 +253,7 @@ start_container() {
 }
 
 exec_container() {
-    "$CONTAINER_CLI" exec -it "${CONTAINER_ENV_ARGS[@]}" "$CONTAINER_NAME" "$@"
+    "$CONTAINER_CLI" exec -it "${CONTAINER_ENV_ARGS[@]}" "$CONTAINER_NAME" /usr/local/bin/devcontainer-entrypoint "$@"
 }
 
 stop_container() {
@@ -254,12 +269,12 @@ shell_container() {
     run_in_container bash
 }
 
-agent() {
-    run_in_container opencode "${COMMAND_ARGS[@]}"
+exec_command() {
+    run_in_container "${COMMAND_ARGS[@]}"
 }
 
-agent_switch() {
-    run_in_container oc-switch "${COMMAND_ARGS[@]}"
+agent() {
+    run_in_container opencode "${COMMAND_ARGS[@]}"
 }
 
 agent_serve() {
@@ -269,6 +284,67 @@ agent_serve() {
 run_in_container() {
     start_container >/dev/null
     exec_container "$@"
+}
+
+compose_file() {
+    printf 'services:\n'
+    printf '  devcontainer:\n'
+    printf '    image: "${DEVCONTAINER_IMAGE:-%s}"\n' "$DEFAULT_IMAGE"
+    printf '    container_name: %s\n' "$(yaml_quote "$CONTAINER_NAME")"
+    printf '    working_dir: /workspace\n'
+    printf '    command:\n'
+    printf '      - sleep\n'
+    printf '      - infinity\n'
+    printf '    ports:\n'
+    printf '      - "10012:10012"\n'
+    printf '    labels:\n'
+    printf '      com.alexandru.docker-images.devcontainer: "true"\n'
+    printf '      com.alexandru.docker-images.devcontainer.project: %s\n' "$(yaml_quote "$PROJECT_DIR")"
+    printf '      com.alexandru.docker-images.devcontainer.home-volume: %s\n' "$(yaml_quote "$HOME_VOLUME")"
+
+    if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ] || [ -n "$OPENCODE_CONFIG_HOST_DIR" ] || { [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; }; then
+        printf '    environment:\n'
+
+        if [ -n "${DEVCONTAINER_OPENCODE_GO_API_KEY:-}" ]; then
+            printf '      OPENCODE_API_KEY: "${DEVCONTAINER_OPENCODE_GO_API_KEY}"\n'
+        fi
+
+        if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
+            printf '      OPENCODE_CONFIG_DIR: %s\n' "$(yaml_quote "$OPENCODE_CONFIG_CONTAINER_DIR")"
+        fi
+
+        if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+            printf '      SSH_AUTH_SOCK: "${SSH_AUTH_SOCK}"\n'
+        fi
+    fi
+
+    printf '    volumes:\n'
+    printf '      - type: bind\n'
+    printf '        source: %s\n' "$(yaml_quote "$PROJECT_DIR")"
+    printf '        target: /workspace\n'
+    printf '      - type: volume\n'
+    printf '        source: home\n'
+    printf '        target: /home/dev\n'
+
+    if [ -n "$OPENCODE_CONFIG_HOST_DIR" ]; then
+        printf '      - type: bind\n'
+        printf '        source: "${DEVCONTAINER_OPENCODE_CONFIG_DIR}"\n'
+        printf '        target: %s\n' "$(yaml_quote "$OPENCODE_CONFIG_CONTAINER_DIR")"
+        printf '        read_only: true\n'
+    fi
+
+    if [ -n "${SSH_AUTH_SOCK:-}" ] && [ -S "$SSH_AUTH_SOCK" ]; then
+        printf '      - type: bind\n'
+        printf '        source: "${SSH_AUTH_SOCK}"\n'
+        printf '        target: "${SSH_AUTH_SOCK}"\n'
+    fi
+
+    printf '\nvolumes:\n'
+    printf '  home:\n'
+    printf '    name: %s\n' "$(yaml_quote "$HOME_VOLUME")"
+    printf '    labels:\n'
+    printf '      com.alexandru.docker-images.devcontainer: "true"\n'
+    printf '      com.alexandru.docker-images.devcontainer.project: %s\n' "$(yaml_quote "$PROJECT_DIR")"
 }
 
 purge_container() {
@@ -410,7 +486,7 @@ COMMAND_ARGS=()
 CONTAINER_ENV_ARGS=()
 
 case "$COMMAND" in
-    start|stop|restart|shell|agent-serve|purge)
+    start|stop|restart|shell|compose|agent-serve|purge)
         if [ "$#" -ne 2 ]; then
             usage "$COMMAND"
             exit 1
@@ -427,7 +503,7 @@ case "$COMMAND" in
         PROJECT_DIR="$(project_path "$2")"
         COMMAND_ARGS=("${@:3}")
         ;;
-    agent-switch)
+    exec)
         if [ "$#" -lt 3 ]; then
             usage "$COMMAND"
             exit 1
@@ -448,23 +524,25 @@ case "$COMMAND" in
         ;;
 esac
 
-CONTAINER_CLI="$(find_container_cli)" || {
-    printf 'No container CLI found. Install wslc.exe, docker, or podman, or set CONTAINER_CLI.\n' >&2
-    exit 1
-}
-
 if [ -n "$PROJECT_DIR" ]; then
     CONTAINER_NAME="$(container_name "$PROJECT_DIR")"
     HOME_VOLUME="$(home_volume "$PROJECT_DIR")"
 fi
 
 case "$COMMAND" in
-    start|restart|shell|agent|agent-switch|agent-serve)
+    start|restart|shell|exec|compose|agent|agent-serve)
         configure_opencode_config_mount
         ;;
 esac
 
 configure_container_env_args
+
+if [ "$COMMAND" != "compose" ]; then
+    CONTAINER_CLI="$(find_container_cli)" || {
+        printf 'No container CLI found. Install wslc.exe, docker, or podman, or set CONTAINER_CLI.\n' >&2
+        exit 1
+    }
+fi
 
 case "$COMMAND" in
     start)
@@ -480,11 +558,14 @@ case "$COMMAND" in
     shell)
         shell_container
         ;;
+    exec)
+        exec_command
+        ;;
+    compose)
+        compose_file
+        ;;
     agent)
         agent
-        ;;
-    agent-switch)
-        agent_switch
         ;;
     agent-serve)
         agent_serve
