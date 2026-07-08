@@ -17,6 +17,8 @@ DEFAULT_AGENT_PORT = "10012"
 DEFAULT_HOME_VOLUME = "jdk-build-tools-devcontainer-home"
 CONTAINER_PREFIX = "jdk-build-tools-dev-"
 CONTAINER_LABEL = "com.alexandru.docker-images.devcontainer=true"
+PROJECT_LABEL = "com.alexandru.docker-images.devcontainer.project"
+HOME_VOLUME_LABEL = "com.alexandru.docker-images.devcontainer.home-volume"
 OPENCODE_CONFIG_CONTAINER_DIR = "/opt/opencode-config"
 
 IMAGE = os.environ.get("DEVCONTAINER_IMAGE") or DEFAULT_IMAGE
@@ -94,7 +96,7 @@ def container_name(project_dir):
     return f"{CONTAINER_PREFIX}{project_token(project_dir)}"
 
 
-def home_volume(project_dir):
+def home_volume():
     return HOME_VOLUME_NAME
 
 
@@ -150,7 +152,7 @@ class DevContainer:
         self.command_args = list(command_args or [])
         self.container_cli = container_cli or ""
         self.container_name = container_name(project_dir) if project_dir else ""
-        self.home_volume = home_volume(project_dir) if project_dir else ""
+        self.home_volume = home_volume() if project_dir else ""
         self.opencode_config_host_dir = ""
         self.agent_port = ""
         self.container_env_args = []
@@ -277,74 +279,88 @@ class DevContainer:
                 stderr=subprocess.DEVNULL,
             )
         else:
-            self.run_cli(
-                [
-                    "volume",
-                    "create",
-                    "--label",
-                    CONTAINER_LABEL,
-                    "--label",
-                    f"com.alexandru.docker-images.devcontainer.project={self.project_dir}",
-                    self.home_volume,
-                ],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-
-            ssh_args = []
-            if has_ssh_auth_sock():
-                ssh_auth_sock = os.environ["SSH_AUTH_SOCK"]
-                ssh_args = ["-v", f"{ssh_auth_sock}:{ssh_auth_sock}", "-e", f"SSH_AUTH_SOCK={ssh_auth_sock}"]
-
-            opencode_config_args = []
-            if self.opencode_config_host_dir:
-                opencode_config_args = [
-                    "-v",
-                    f"{self.opencode_config_host_dir}:{OPENCODE_CONFIG_CONTAINER_DIR}:ro",
-                ]
-
-            agent_port_args = []
-            if self.agent_port:
-                agent_port_args = ["-p", f"{self.agent_port}:10012"]
-
-            self.run_cli(
-                [
-                    "run",
-                    "-d",
-                    "--name",
-                    self.container_name,
-                    "--label",
-                    CONTAINER_LABEL,
-                    "--label",
-                    f"com.alexandru.docker-images.devcontainer.project={self.project_dir}",
-                    "--label",
-                    f"com.alexandru.docker-images.devcontainer.home-volume={self.home_volume}",
-                    "-v",
-                    f"{self.project_dir}:/workspace",
-                    "-v",
-                    f"{self.home_volume}:/home/dev",
-                    *ssh_args,
-                    *self.container_env_args,
-                    *opencode_config_args,
-                    *agent_port_args,
-                    "-w",
-                    "/workspace",
-                    IMAGE,
-                    "sleep",
-                    "infinity",
-                ],
-                stdout=subprocess.DEVNULL,
-                check=True,
-            )
+            self.create_home_volume()
+            self.run_new_container()
 
         if announce:
-            print(f"Container: {self.container_name}")
-            print(f"Project:   {self.project_dir} -> /workspace")
-            print(f"Home:      {self.home_volume} -> /home/dev")
-            print(
-                "Shell:     "
-                f"{shlex.quote(self.container_cli)} exec -it {shlex.quote(self.container_name)} bash"
-            )
+            self.print_start_summary()
+
+    def create_home_volume(self):
+        self.run_cli(
+            [
+                "volume",
+                "create",
+                "--label",
+                CONTAINER_LABEL,
+                "--label",
+                f"{PROJECT_LABEL}={self.project_dir}",
+                self.home_volume,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def ssh_args(self):
+        if not has_ssh_auth_sock():
+            return []
+
+        ssh_auth_sock = os.environ["SSH_AUTH_SOCK"]
+        return ["-v", f"{ssh_auth_sock}:{ssh_auth_sock}", "-e", f"SSH_AUTH_SOCK={ssh_auth_sock}"]
+
+    def opencode_config_mount_args(self):
+        if not self.opencode_config_host_dir:
+            return []
+
+        return [
+            "-v",
+            f"{self.opencode_config_host_dir}:{OPENCODE_CONFIG_CONTAINER_DIR}:ro",
+        ]
+
+    def agent_port_args(self):
+        if not self.agent_port:
+            return []
+
+        return ["-p", f"{self.agent_port}:10012"]
+
+    def run_new_container(self):
+        self.run_cli(
+            [
+                "run",
+                "-d",
+                "--name",
+                self.container_name,
+                "--label",
+                CONTAINER_LABEL,
+                "--label",
+                f"{PROJECT_LABEL}={self.project_dir}",
+                "--label",
+                f"{HOME_VOLUME_LABEL}={self.home_volume}",
+                "-v",
+                f"{self.project_dir}:/workspace",
+                "-v",
+                f"{self.home_volume}:/home/dev",
+                *self.ssh_args(),
+                *self.container_env_args,
+                *self.opencode_config_mount_args(),
+                *self.agent_port_args(),
+                "-w",
+                "/workspace",
+                IMAGE,
+                "sleep",
+                "infinity",
+            ],
+            stdout=subprocess.DEVNULL,
+            check=True,
+        )
+
+    def print_start_summary(self):
+        print(f"Container: {self.container_name}")
+        print(f"Project:   {self.project_dir} -> /workspace")
+        print(f"Home:      {self.home_volume} -> /home/dev")
+        print(
+            "Shell:     "
+            f"{shlex.quote(self.container_cli)} exec -it {shlex.quote(self.container_name)} bash"
+        )
 
     def exec_container(self, args):
         command = [
@@ -405,14 +421,8 @@ class DevContainer:
 
         print("    labels:")
         print('      com.alexandru.docker-images.devcontainer: "true"')
-        print(
-            "      com.alexandru.docker-images.devcontainer.project: "
-            f"{yaml_quote(self.project_dir)}"
-        )
-        print(
-            "      com.alexandru.docker-images.devcontainer.home-volume: "
-            f"{yaml_quote(self.home_volume)}"
-        )
+        print(f"      {PROJECT_LABEL}: {yaml_quote(self.project_dir)}")
+        print(f"      {HOME_VOLUME_LABEL}: {yaml_quote(self.home_volume)}")
 
         self.compose_environment()
         self.compose_mounts()
@@ -466,10 +476,7 @@ class DevContainer:
         print(f"    name: {yaml_quote(self.home_volume)}")
         print("    labels:")
         print('      com.alexandru.docker-images.devcontainer: "true"')
-        print(
-            "      com.alexandru.docker-images.devcontainer.project: "
-            f"{yaml_quote(self.project_dir)}"
-        )
+        print(f"      {PROJECT_LABEL}: {yaml_quote(self.project_dir)}")
 
     def purge_container(self):
         if self.container_exists():
@@ -659,29 +666,29 @@ def create_devcontainer(namespace, container_cli):
 
 
 def dispatch(devcontainer):
-    if devcontainer.command == "start":
-        devcontainer.start_container()
-    elif devcontainer.command == "stop":
-        devcontainer.stop_container()
-    elif devcontainer.command == "restart":
+    if devcontainer.command == "restart":
         devcontainer.stop_container()
         devcontainer.start_container()
-    elif devcontainer.command == "shell":
-        devcontainer.shell_container()
-    elif devcontainer.command == "exec":
-        devcontainer.exec_command()
-    elif devcontainer.command == "compose":
-        devcontainer.compose_file()
-    elif devcontainer.command == "agent":
-        devcontainer.agent()
-    elif devcontainer.command == "agent-serve":
-        devcontainer.agent_serve()
-    elif devcontainer.command == "purge":
-        devcontainer.purge_container()
-    elif devcontainer.command == "purge-all":
-        devcontainer.purge_all()
-    else:
-        raise ValueError(f"Unhandled command: {devcontainer.command}")
+        return
+
+    handlers = {
+        "start": devcontainer.start_container,
+        "stop": devcontainer.stop_container,
+        "shell": devcontainer.shell_container,
+        "exec": devcontainer.exec_command,
+        "compose": devcontainer.compose_file,
+        "agent": devcontainer.agent,
+        "agent-serve": devcontainer.agent_serve,
+        "purge": devcontainer.purge_container,
+        "purge-all": devcontainer.purge_all,
+    }
+
+    try:
+        handler = handlers[devcontainer.command]
+    except KeyError as error:
+        raise ValueError(f"Unhandled command: {devcontainer.command}") from error
+
+    handler()
 
 
 def main(argv=None):
