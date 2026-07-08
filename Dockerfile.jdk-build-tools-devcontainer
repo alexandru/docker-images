@@ -79,7 +79,7 @@ ENV MAVEN_HOME=/opt/sdkman/candidates/maven/current
 ENV SBT_HOME=/opt/sdkman/candidates/sbt/current
 ENV SCALACLI_HOME=/opt/sdkman/candidates/scalacli/current
 ENV HOME=/home/dev
-ENV PATH="/home/dev/.config/opencode/bin:/usr/local/bin:${SCALACLI_HOME}/bin:${SBT_HOME}/bin:${MAVEN_HOME}/bin:${JBANG_HOME}/bin:${JAVA_HOME}/bin:${GRADLE_HOME}/bin:${PATH}"
+ENV PATH="/opt/opencode-config/bin:/usr/local/bin:${SCALACLI_HOME}/bin:${SBT_HOME}/bin:${MAVEN_HOME}/bin:${JBANG_HOME}/bin:${JAVA_HOME}/bin:${GRADLE_HOME}/bin:${PATH}"
 
 RUN mkdir -p /tmp/opencode-home && \
     curl -fsSL https://opencode.ai/install | HOME=/tmp/opencode-home bash -s -- --no-modify-path && \

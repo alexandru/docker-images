@@ -1,2 +1,3 @@
 .build/
 plans
+__pycache__/
