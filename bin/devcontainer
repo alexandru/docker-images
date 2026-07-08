@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 """Manage per-project JVM build-tool devcontainers.
-
-This is a Python 3 translation of ``bin/devcontainer``.  The original bash
-script is intentionally kept as-is.
 """
 
 import argparse
