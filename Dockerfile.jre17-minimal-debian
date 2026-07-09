@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 eclipse-temurin:17 as jre-build
+FROM eclipse-temurin:17 as jre-build
 
 # Create a custom Java runtime
 RUN $JAVA_HOME/bin/jlink \
@@ -10,7 +10,7 @@ RUN $JAVA_HOME/bin/jlink \
         --output /javaruntime
 
 # Our resulting Debian-based image
-FROM --platform=linux/amd64 debian:buster-slim
+FROM debian:buster-slim
 ENV JAVA_HOME=/opt/java
 ENV PATH "${JAVA_HOME}/bin:${PATH}"
 COPY --from=jre-build /javaruntime $JAVA_HOME

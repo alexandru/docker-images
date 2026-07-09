@@ -6,8 +6,15 @@ on:
 
 jobs:
   push-tools:
-    name: jdk-build-tools
-    runs-on: ubuntu-latest
+    name: jdk-build-tools (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       packages: write
       contents: read
@@ -15,16 +22,44 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: |
-          make build-jdk-build-tools
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Push Docker image
+      - name: Build and push Docker image
         run: |
-          make push-jdk-build-tools
+          make push-jdk-build-tools-platform PLATFORM=${{ matrix.platform }}
+
+  push-tools-manifest:
+    name: jdk-build-tools manifest
+    needs: push-tools
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        run: |
+          make push-jdk-build-tools-manifest
 
   push-tools-devcontainer:
     name: jdk-build-tools-devcontainer (${{ matrix.platform }})
@@ -83,43 +118,113 @@ jobs:
           make push-jdk-build-tools-devcontainer-manifest
 
   push-jre17-minimal-debian:
-    name: jre17-minimal-debian
-    runs-on: ubuntu-latest
+    name: jre17-minimal-debian (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       packages: write
       contents: read
-    
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: |
-          make build-jre17-minimal-debian
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
-        
-      - name: Push Docker image
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
         run: |
-          make push-jre17-minimal-debian
+          make push-jre17-minimal-debian-platform PLATFORM=${{ matrix.platform }}
+
+  push-jre17-minimal-debian-manifest:
+    name: jre17-minimal-debian manifest
+    needs: push-jre17-minimal-debian
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        run: |
+          make push-jre17-minimal-debian-manifest
 
   push-jre17-minimal-alpine:
-    name: jre17-minimal-alpine
-    runs-on: ubuntu-latest
+    name: jre17-minimal-alpine (${{ matrix.platform }})
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       packages: write
       contents: read
-    
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: |
-          make build-jre17-minimal-alpine
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
-        
-      - name: Push Docker image
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
         run: |
-          make push-jre17-minimal-alpine
+          make push-jre17-minimal-alpine-platform PLATFORM=${{ matrix.platform }}
+
+  push-jre17-minimal-alpine-manifest:
+    name: jre17-minimal-alpine manifest
+    needs: push-jre17-minimal-alpine
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push multi-platform manifest
+        run: |
+          make push-jre17-minimal-alpine-manifest

@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 ubuntu:26.04
+FROM ubuntu:26.04
 
 # Defining default non-root user UID, GID, and name
 ARG USER_UID="1000"
