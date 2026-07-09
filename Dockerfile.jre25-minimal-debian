@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21 AS jre-build
+FROM eclipse-temurin:25 AS jre-build
 
 # Create a custom Java runtime
 RUN $JAVA_HOME/bin/jlink \

@@ -8,6 +8,10 @@ JRE21_MINIMAL_DEBIAN_IMAGE := ghcr.io/alexandru/jre21-minimal-debian
 JRE21_MINIMAL_DEBIAN_TAG   := ${JRE21_MINIMAL_DEBIAN_IMAGE}:latest
 JRE21_MINIMAL_ALPINE_IMAGE := ghcr.io/alexandru/jre21-minimal-alpine
 JRE21_MINIMAL_ALPINE_TAG   := ${JRE21_MINIMAL_ALPINE_IMAGE}:latest
+JRE25_MINIMAL_DEBIAN_IMAGE := ghcr.io/alexandru/jre25-minimal-debian
+JRE25_MINIMAL_DEBIAN_TAG   := ${JRE25_MINIMAL_DEBIAN_IMAGE}:latest
+JRE25_MINIMAL_ALPINE_IMAGE := ghcr.io/alexandru/jre25-minimal-alpine
+JRE25_MINIMAL_ALPINE_TAG   := ${JRE25_MINIMAL_ALPINE_IMAGE}:latest
 CONTAINER_CLI              ?= $(shell command -v wslc.exe 2>/dev/null || command -v wslc 2>/dev/null || command -v docker 2>/dev/null || command -v podman 2>/dev/null)
 PLATFORM                   ?= linux/amd64
 PLATFORM_TAG               = $(subst /,-,${PLATFORM})
@@ -16,6 +20,8 @@ BUILD_TOOLS_DEV_PLATFORM_TAG = ${BUILD_TOOLS_DEV_IMAGE}:${PLATFORM_TAG}
 JRE17_MINIMAL_DEBIAN_PLATFORM_TAG = ${JRE17_MINIMAL_DEBIAN_IMAGE}:${PLATFORM_TAG}
 JRE21_MINIMAL_DEBIAN_PLATFORM_TAG = ${JRE21_MINIMAL_DEBIAN_IMAGE}:${PLATFORM_TAG}
 JRE21_MINIMAL_ALPINE_PLATFORM_TAG = ${JRE21_MINIMAL_ALPINE_IMAGE}:${PLATFORM_TAG}
+JRE25_MINIMAL_DEBIAN_PLATFORM_TAG = ${JRE25_MINIMAL_DEBIAN_IMAGE}:${PLATFORM_TAG}
+JRE25_MINIMAL_ALPINE_PLATFORM_TAG = ${JRE25_MINIMAL_ALPINE_IMAGE}:${PLATFORM_TAG}
 
 check-container-cli:
 	@test -n "${CONTAINER_CLI}" || (echo "No container CLI found. Install wslc.exe, docker, or podman, or set CONTAINER_CLI=/path/to/cli." >&2; exit 1)
@@ -108,3 +114,37 @@ push-jre21-minimal-alpine-manifest: init-docker-buildx
 	docker buildx imagetools create -t "${JRE21_MINIMAL_ALPINE_TAG}" \
 		"${JRE21_MINIMAL_ALPINE_IMAGE}:linux-amd64" \
 		"${JRE21_MINIMAL_ALPINE_IMAGE}:linux-arm64"
+
+build-jre25-minimal-debian: check-container-cli
+	"${CONTAINER_CLI}" build -f ./Dockerfile.jre25-minimal-debian -t "${JRE25_MINIMAL_DEBIAN_TAG}" .
+
+push-jre25-minimal-debian: check-container-cli
+	"${CONTAINER_CLI}" push "${JRE25_MINIMAL_DEBIAN_TAG}"
+
+build-jre25-minimal-debian-platform: init-docker-buildx
+	docker buildx build --platform "${PLATFORM}" -f ./Dockerfile.jre25-minimal-debian -t "${JRE25_MINIMAL_DEBIAN_PLATFORM_TAG}" ${DOCKER_EXTRA_ARGS} .
+
+push-jre25-minimal-debian-platform:
+	DOCKER_EXTRA_ARGS="--push" $(MAKE) build-jre25-minimal-debian-platform
+
+push-jre25-minimal-debian-manifest: init-docker-buildx
+	docker buildx imagetools create -t "${JRE25_MINIMAL_DEBIAN_TAG}" \
+		"${JRE25_MINIMAL_DEBIAN_IMAGE}:linux-amd64" \
+		"${JRE25_MINIMAL_DEBIAN_IMAGE}:linux-arm64"
+
+build-jre25-minimal-alpine: check-container-cli
+	"${CONTAINER_CLI}" build -f ./Dockerfile.jre25-minimal-alpine -t "${JRE25_MINIMAL_ALPINE_TAG}" .
+
+push-jre25-minimal-alpine: check-container-cli
+	"${CONTAINER_CLI}" push "${JRE25_MINIMAL_ALPINE_TAG}"
+
+build-jre25-minimal-alpine-platform: init-docker-buildx
+	docker buildx build --platform "${PLATFORM}" -f ./Dockerfile.jre25-minimal-alpine -t "${JRE25_MINIMAL_ALPINE_PLATFORM_TAG}" ${DOCKER_EXTRA_ARGS} .
+
+push-jre25-minimal-alpine-platform:
+	DOCKER_EXTRA_ARGS="--push" $(MAKE) build-jre25-minimal-alpine-platform
+
+push-jre25-minimal-alpine-manifest: init-docker-buildx
+	docker buildx imagetools create -t "${JRE25_MINIMAL_ALPINE_TAG}" \
+		"${JRE25_MINIMAL_ALPINE_IMAGE}:linux-amd64" \
+		"${JRE25_MINIMAL_ALPINE_IMAGE}:linux-arm64"

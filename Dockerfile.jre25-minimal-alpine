@@ -1,6 +1,7 @@
-FROM eclipse-temurin:21 AS jre-build
+FROM eclipse-temurin:25-alpine AS jre-build
 
 # Create a custom Java runtime
+RUN apk add binutils --no-cache
 RUN $JAVA_HOME/bin/jlink \
         --add-modules java.se \
         --strip-debug \
@@ -9,8 +10,8 @@ RUN $JAVA_HOME/bin/jlink \
         --compress=zip-6 \
         --output /javaruntime
 
-# Our resulting Debian-based image
-FROM debian:bookworm-slim
+# Our resulting Alpine-based image
+FROM alpine:latest
 ENV JAVA_HOME=/opt/java
 ENV PATH "${JAVA_HOME}/bin:${PATH}"
 COPY --from=jre-build /javaruntime $JAVA_HOME
