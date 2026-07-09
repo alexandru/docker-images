@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Manage per-project JVM build-tool devcontainers.
+"""Manage the JVM build-tool devcontainer.
 """
 
 import argparse
@@ -15,12 +15,12 @@ import sys
 DEFAULT_IMAGE = "ghcr.io/alexandru/jdk-build-tools-devcontainer:latest"
 DEFAULT_AGENT_PORT = "10012"
 DEFAULT_HOME_VOLUME = "jdk-build-tools-devcontainer-home"
-CONTAINER_PREFIX = "jdk-build-tools-dev-"
+CONTAINER_NAME = "jdk-build-tools-devcontainer"
 CONTAINER_LABEL = "com.alexandru.docker-images.devcontainer=true"
-PROJECT_LABEL = "com.alexandru.docker-images.devcontainer.project"
 HOME_VOLUME_LABEL = "com.alexandru.docker-images.devcontainer.home-volume"
 OPENCODE_CONFIG_CONTAINER_DIR = "/opt/opencode-config"
 WORKSPACE_LINK = "/workspace"
+EXEC_WORKDIR = "/workspace"
 CONTAINER_USER = "dev"
 ROOT_USER = "root"
 
@@ -133,45 +133,6 @@ IMAGE = os.environ.get("DEVCONTAINER_IMAGE") or DEFAULT_IMAGE
 HOME_VOLUME_NAME = os.environ.get("DEVCONTAINER_HOME_VOLUME") or DEFAULT_HOME_VOLUME
 LEGACY_HOME_VOLUME_PREFIX = os.environ.get("DEVCONTAINER_HOME_VOLUME_PREFIX") or f"{HOME_VOLUME_NAME}-"
 
-CRC_POLYNOMIAL = 0x04C11DB7
-
-
-def make_crc_table():
-    table = []
-    for value in range(256):
-        crc = value << 24
-        for _ in range(8):
-            if crc & 0x80000000:
-                crc = ((crc << 1) ^ CRC_POLYNOMIAL) & 0xFFFFFFFF
-            else:
-                crc = (crc << 1) & 0xFFFFFFFF
-        table.append(crc)
-    return table
-
-
-CRC_TABLE = make_crc_table()
-
-
-def posix_cksum(data):
-    """Return the POSIX cksum checksum for *data*.
-
-    POSIX cksum uses a non-reflected CRC-32 with polynomial 0x04C11DB7,
-    appends the input length low byte first, then returns the bitwise
-    complement.  For empty input this returns 4294967295.
-    """
-
-    crc = 0
-    for byte in data:
-        crc = ((crc << 8) ^ CRC_TABLE[((crc >> 24) ^ byte) & 0xFF]) & 0xFFFFFFFF
-
-    length = len(data)
-    while length:
-        crc = ((crc << 8) ^ CRC_TABLE[((crc >> 24) ^ length) & 0xFF]) & 0xFFFFFFFF
-        length >>= 8
-
-    return (~crc) & 0xFFFFFFFF
-
-
 def canonical_dir(path, description):
     if not os.path.isdir(path):
         print(f"{description} directory does not exist: {path}", file=sys.stderr)
@@ -218,23 +179,6 @@ def project_mount_path(project_dir):
 
 def opencode_config_path(path):
     return canonical_dir(path, "OpenCode config")
-
-
-def slugify_basename(name):
-    allowed = set(b"abcdefghijklmnopqrstuvwxyz0123456789_.-")
-    slug = bytes(byte if byte in allowed else ord("-") for byte in os.fsencode(name).lower())
-    return slug.decode("ascii") or "project"
-
-
-def project_token(project_dir):
-    base = os.path.basename(project_dir)
-    slug = slugify_basename(base)
-    checksum = posix_cksum(os.fsencode(project_dir))
-    return f"{slug}-{checksum}"
-
-
-def container_name(project_dir):
-    return f"{CONTAINER_PREFIX}{project_token(project_dir)}"
 
 
 def home_volume():
@@ -320,14 +264,22 @@ class DevContainer:
         self.project_container_mount_dir = self.project_mount_dir
         self.command_args = list(command_args or [])
         self.container_cli = container_cli or ""
-        self.container_name = container_name(project_dir) if project_dir else ""
-        self.home_volume = home_volume() if project_dir else ""
+        self.container_name = CONTAINER_NAME
+        self.home_volume = home_volume()
         self.opencode_config_host_dir = ""
         self.agent_port = ""
         self.container_env_args = []
 
     def uses_wslc(self):
         return is_wslc_cli(self.container_cli)
+
+    def uses_podman(self):
+        return os.path.basename(self.container_cli).lower() in {"podman", "podman.exe"}
+
+    def inspect_args(self):
+        if self.uses_podman():
+            return ["container", "inspect"]
+        return ["inspect"]
 
     def run_cli(self, args, *, stdout=None, stderr=None, capture=False, check=False):
         command = [self.container_cli, *args]
@@ -347,7 +299,7 @@ class DevContainer:
         return result
 
     def inspect_objects(self, *names):
-        result = self.run_cli(["inspect", *names], capture=True)
+        result = self.run_cli([*self.inspect_args(), *names], capture=True)
         if result.returncode != 0 or not result.stdout.strip():
             return []
 
@@ -382,32 +334,49 @@ class DevContainer:
 
     def configure_agent_port(self):
         self.agent_port = os.environ.get("DEVCONTAINER_AGENT_PORT", "")
-        if self.command == "agent-serve" and not self.agent_port:
+        if self.command in {"start", "compose"} and not self.agent_port:
             self.agent_port = DEFAULT_AGENT_PORT
 
+    def container_inspect(self):
+        return self.inspect_object(self.container_name)
+
     def container_exists(self):
-        return (
-            self.run_cli(
-                ["inspect", self.container_name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            ).returncode
-            == 0
-        )
+        return bool(self.container_inspect())
+
+    def container_running_state(self, container):
+        state = container.get("State", {}) if container else {}
+        return isinstance(state, dict) and bool(state.get("Running"))
+
+    def assert_container_running(self):
+        container = self.container_inspect()
+        if self.container_running_state(container):
+            return
+        if container:
+            print(f"Container is not running: {self.container_name}", file=sys.stderr)
+            print(
+                f"Run `{sys.argv[0]} start <project-directory>` to start it.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"Container does not exist: {self.container_name}", file=sys.stderr)
+            print(
+                f"Run `{sys.argv[0]} start <project-directory>` to create it.",
+                file=sys.stderr,
+            )
+        raise SystemExit(1)
+
+    def container_mount_source(self, destination):
+        container = self.inspect_object(self.container_name)
+        for mount in container.get("Mounts", []):
+            if mount.get("Destination") == destination:
+                return normalize_container_path(mount.get("Source", ""))
+        return ""
 
     def container_opencode_config_source(self):
-        container = self.inspect_object(self.container_name)
-        for mount in container.get("Mounts", []):
-            if mount.get("Destination") == OPENCODE_CONFIG_CONTAINER_DIR:
-                return normalize_container_path(mount.get("Source", ""))
-        return ""
+        return self.container_mount_source(OPENCODE_CONFIG_CONTAINER_DIR)
 
     def container_project_mount_source(self):
-        container = self.inspect_object(self.container_name)
-        for mount in container.get("Mounts", []):
-            if mount.get("Destination") == self.project_container_mount_dir:
-                return normalize_container_path(mount.get("Source", ""))
-        return ""
+        return self.container_mount_source(self.project_container_mount_dir)
 
     def container_working_dir(self):
         container = self.inspect_object(self.container_name)
@@ -416,6 +385,8 @@ class DevContainer:
     def container_agent_ports(self):
         container = self.inspect_object(self.container_name)
         bindings = container.get("HostConfig", {}).get("PortBindings", {}).get("10012/tcp") or []
+        if not bindings:
+            bindings = container.get("Ports", {}).get("10012/tcp") or []
         return [binding.get("HostPort", "") for binding in bindings if binding.get("HostPort")]
 
     def ensure_opencode_config_mount(self):
@@ -429,7 +400,7 @@ class DevContainer:
                 file=sys.stderr,
             )
             print(
-                f"Run `{sys.argv[0]} purge {shlex.quote(self.project_dir)}` and start it again to apply DEVCONTAINER_OPENCODE_CONFIG_DIR.",
+                f"Run `{sys.argv[0]} purge` and start it again to apply DEVCONTAINER_OPENCODE_CONFIG_DIR.",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -445,7 +416,10 @@ class DevContainer:
             f"Container already exists without host port {self.agent_port} mapped to container port 10012.",
             file=sys.stderr,
         )
-        print("Remove and recreate the container to apply DEVCONTAINER_AGENT_PORT.", file=sys.stderr)
+        print(
+            f"Run `{sys.argv[0]} purge` and start it again to apply DEVCONTAINER_AGENT_PORT.",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
     def ensure_project_mount(self):
@@ -455,7 +429,7 @@ class DevContainer:
                 file=sys.stderr,
             )
             print(
-                f"Run `{sys.argv[0]} purge {shlex.quote(self.project_dir)}` and start it again "
+                f"Run `{sys.argv[0]} purge` and start it again "
                 "to mount the project at its full container path.",
                 file=sys.stderr,
             )
@@ -467,7 +441,7 @@ class DevContainer:
                 file=sys.stderr,
             )
             print(
-                f"Run `{sys.argv[0]} purge {shlex.quote(self.project_dir)}` and start it again "
+                f"Run `{sys.argv[0]} purge` and start it again "
                 f"to use {self.project_container_dir}.",
                 file=sys.stderr,
             )
@@ -498,7 +472,7 @@ class DevContainer:
                 "--label",
                 CONTAINER_LABEL,
                 "--label",
-                f"{PROJECT_LABEL}={self.project_dir}",
+                f"{HOME_VOLUME_LABEL}={self.home_volume}",
                 self.home_volume,
             ],
             stdout=subprocess.DEVNULL,
@@ -544,8 +518,6 @@ class DevContainer:
                 "--label",
                 CONTAINER_LABEL,
                 "--label",
-                f"{PROJECT_LABEL}={self.project_dir}",
-                "--label",
                 f"{HOME_VOLUME_LABEL}={self.home_volume}",
                 "--user",
                 ROOT_USER,
@@ -580,6 +552,7 @@ class DevContainer:
         )
 
     def exec_container(self, args):
+        workdir = self.project_container_dir or EXEC_WORKDIR
         command = [
             self.container_cli,
             "exec",
@@ -587,7 +560,7 @@ class DevContainer:
             "-u",
             CONTAINER_USER,
             "-w",
-            self.project_container_dir,
+            workdir,
             *self.container_env_args,
             self.container_name,
             "/usr/local/bin/devcontainer-entrypoint",
@@ -596,31 +569,35 @@ class DevContainer:
         os.execvp(self.container_cli, command)
 
     def stop_container(self):
-        if self.container_exists():
-            self.run_cli(
-                ["stop", self.container_name],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            print(f"Stopped: {self.container_name}")
-        else:
+        container = self.container_inspect()
+        if not container:
             print(f"Container does not exist: {self.container_name}")
+            return
+        if not self.container_running_state(container):
+            print(f"Container is not running: {self.container_name}")
+            return
+        self.run_cli(
+            ["stop", self.container_name],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"Stopped: {self.container_name}")
 
     def shell_container(self):
-        self.run_in_container(["bash"])
+        self.assert_container_running()
+        self.exec_container(["bash"])
 
     def exec_command(self):
-        self.run_in_container(self.command_args)
+        self.assert_container_running()
+        self.exec_container(self.command_args)
 
     def agent(self):
-        self.run_in_container(["opencode", *self.command_args])
+        self.assert_container_running()
+        self.exec_container(["opencode", *self.command_args])
 
     def agent_serve(self):
-        self.run_in_container(["opencode", "serve", "--port", "10012", "--hostname", "0.0.0.0"])
-
-    def run_in_container(self, args):
-        self.start_container(announce=False)
-        self.exec_container(args)
+        self.assert_container_running()
+        self.exec_container(["opencode", "serve", "--port", "10012", "--hostname", "0.0.0.0"])
 
     def compose_file(self):
         self.compose_service()
@@ -644,7 +621,6 @@ class DevContainer:
 
         print("    labels:")
         print('      com.alexandru.docker-images.devcontainer: "true"')
-        print(f"      {PROJECT_LABEL}: {yaml_quote(self.project_dir)}")
         print(f"      {HOME_VOLUME_LABEL}: {yaml_quote(self.home_volume)}")
 
         self.compose_environment()
@@ -692,7 +668,6 @@ class DevContainer:
         print(f"    name: {yaml_quote(self.home_volume)}")
         print("    labels:")
         print('      com.alexandru.docker-images.devcontainer: "true"')
-        print(f"      {PROJECT_LABEL}: {yaml_quote(self.project_dir)}")
 
     def purge_container(self):
         if self.container_exists():
@@ -704,6 +679,39 @@ class DevContainer:
             print(f"Deleted container: {self.container_name}")
         else:
             print(f"Container does not exist: {self.container_name}")
+
+    def restart_container(self):
+        container = self.container_inspect()
+        if not container:
+            print(f"Container does not exist: {self.container_name}", file=sys.stderr)
+            print(
+                f"Run `{sys.argv[0]} start <project-directory>` to create it.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        if self.uses_wslc():
+            if self.container_running_state(container):
+                self.run_cli(
+                    ["stop", self.container_name],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=True,
+                )
+            self.run_cli(
+                ["start", self.container_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+        else:
+            self.run_cli(
+                ["restart", self.container_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
+            )
+        print(f"Restarted: {self.container_name}")
 
     def collect_container_ids(self, container_ids, filter_arg):
         result = self.run_cli(
@@ -804,7 +812,7 @@ ENVIRONMENT_HELP = f"""
 Environment:
   CONTAINER_CLI                     Container CLI to use. Defaults to first available wslc.exe, wslc, docker, or podman.
   DEVCONTAINER_IMAGE                Image to run. Defaults to {IMAGE}.
-  DEVCONTAINER_AGENT_PORT           Optional host port for container port 10012; agent-serve defaults to {DEFAULT_AGENT_PORT}.
+  DEVCONTAINER_AGENT_PORT           Host port for container port 10012; `start` defaults to {DEFAULT_AGENT_PORT}.
   DEVCONTAINER_HOME_VOLUME          Shared /home/dev volume name. Defaults to {HOME_VOLUME_NAME}.
   DEVCONTAINER_HOME_VOLUME_PREFIX   Legacy per-workspace /home/dev volume prefix removed by purge-all. Defaults to {LEGACY_HOME_VOLUME_PREFIX}.
   DEVCONTAINER_OPENCODE_CONFIG_DIR  Optional host config directory mounted read-write; sets OPENCODE_CONFIG_DIR={OPENCODE_CONFIG_CONTAINER_DIR} inside the container.
@@ -815,7 +823,7 @@ Environment:
 def build_parser():
     parser = argparse.ArgumentParser(
         prog=os.path.basename(sys.argv[0]),
-        description="Manage per-project JVM build-tool devcontainers.",
+        description="Manage the JVM build-tool devcontainer.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -824,6 +832,9 @@ def build_parser():
         command_parser.add_argument("project_directory")
         return command_parser
 
+    def add_simple_command(name, help_text):
+        return subparsers.add_parser(name, help=help_text, description=help_text)
+
     def add_passthrough_command(name, help_text):
         command_parser = subparsers.add_parser(
             name,
@@ -831,26 +842,26 @@ def build_parser():
             help=help_text,
             description=help_text,
         )
-        command_parser.add_argument("project_directory")
         command_parser.add_argument("command_args", nargs=argparse.REMAINDER)
         return command_parser
 
     add_project_command("start", "Start the devcontainer for a project.")
-    add_project_command("stop", "Stop the devcontainer for a project.")
-    add_project_command("restart", "Stop and start the devcontainer for a project.")
-    add_project_command("shell", "Open an interactive shell in the project devcontainer, starting it first if needed.")
-    add_project_command("compose", "Print a docker-compose.yaml for the project devcontainer to stdout.")
-    add_project_command("agent-serve", "Start the opencode server in the project devcontainer, starting the container first if needed.")
-    add_project_command("purge", "Delete the project devcontainer. The shared /home/dev volume is kept.")
+    add_project_command("compose", "Print a docker-compose.yaml for the devcontainer to stdout.")
+
+    add_simple_command("stop", "Stop the devcontainer.")
+    add_simple_command("restart", "Restart the devcontainer; fails if it does not exist.")
+    add_simple_command("shell", "Open an interactive shell in the running devcontainer.")
+    add_simple_command("agent-serve", "Run the opencode server in the running devcontainer.")
+    add_simple_command("purge", "Delete the devcontainer. The shared /home/dev volume is kept.")
 
     add_passthrough_command(
         "exec",
-        "Run a command in the project devcontainer, starting it first if needed.",
+        "Run a command in the running devcontainer.",
     )
 
     add_passthrough_command(
         "agent",
-        "Start opencode in the project devcontainer, starting the container first if needed.",
+        "Start opencode in the running devcontainer.",
     )
 
     subparsers.add_parser(
@@ -885,8 +896,7 @@ def create_devcontainer(namespace, container_cli):
 
 def dispatch(devcontainer):
     if devcontainer.command == "restart":
-        devcontainer.stop_container()
-        devcontainer.start_container()
+        devcontainer.restart_container()
         return
 
     handlers = {
@@ -919,7 +929,7 @@ def main(argv=None):
         return 0
 
     if namespace.command == "exec" and not namespace.command_args:
-        parser.error("exec requires <project-directory> <command> [argument ...]")
+        parser.error("exec requires <command> [argument ...]")
 
     container_cli = None
     if namespace.command != "compose":
