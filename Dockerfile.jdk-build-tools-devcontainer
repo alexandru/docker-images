@@ -6,6 +6,7 @@ ARG NODE_MAJOR="24"
 
 SHELL ["/bin/bash", "-lc"]
 ENV DEBIAN_FRONTEND=noninteractive
+ENV SDKMAN_DIR=/opt/sdkman
 
 RUN apt-get update && \
     apt-get upgrade -y && \
@@ -19,6 +20,7 @@ RUN apt-get update && \
         sudo \
         tar \
         unzip \
+        wget \
         zip && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /tmp/*
@@ -27,9 +29,23 @@ RUN mkdir -p /etc/apt/keyrings && \
     curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends nodejs && \
+    apt-get install -y --no-install-recommends nodejs openjdk-21-jdk-headless && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf /tmp/*
+
+RUN mkdir -p /etc/ssh/ssh_known_hosts.d && \
+    ssh-keyscan github.com > /etc/ssh/ssh_known_hosts
+
+RUN curl -fsSL "https://get.sdkman.io?ci=true&rcupdate=false" | bash && \
+    sed -i 's/^sdkman_auto_env=.*/sdkman_auto_env=true/' "$SDKMAN_DIR/etc/config" && \
+    rm -rf "$SDKMAN_DIR/tmp"/*
+
+RUN mkdir -p /tmp/opencode-home && \
+    curl -fsSL https://opencode.ai/install | HOME=/tmp/opencode-home bash -s -- --no-modify-path && \
+    /tmp/opencode-home/.opencode/bin/opencode --version && \
+    cp /tmp/opencode-home/.opencode/bin/opencode /usr/local/bin/opencode && \
+    chmod 0755 /usr/local/bin/opencode && \
+    rm -rf /tmp/opencode-home
 
 RUN if getent group "$USER_GID" >/dev/null; then \
         existing_group="$(getent group "$USER_GID" | cut -d: -f1)"; \
@@ -50,45 +66,11 @@ RUN if getent group "$USER_GID" >/dev/null; then \
     fi && \
     echo "dev ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/dev && \
     chmod 0440 /etc/sudoers.d/dev && \
-    mkdir -p /etc/ssh/ssh_known_hosts.d /opt/sdkman /workspaces /home/dev/.config && \
-    ssh-keyscan github.com > /etc/ssh/ssh_known_hosts && \
+    mkdir -p /workspaces /home/dev/.config && \
     chown -R dev:dev /opt/sdkman /workspaces /home/dev
 
-ENV SDKMAN_DIR=/opt/sdkman
-
-USER dev
-WORKDIR /home/dev
-
-RUN curl -fsSL https://get.sdkman.io | bash && \
-    source "$SDKMAN_DIR/bin/sdkman-init.sh" && \
-    JAVA_VERSION="$(sdk list java | awk -F'|' '{ vendor_field=$1; gsub(/^[[:space:]]+|[[:space:]]+$/, "", vendor_field); if (vendor_field != "") vendor=vendor_field; version=$3; gsub(/^[[:space:]]+|[[:space:]]+$/, "", version); identifier=$6; gsub(/^[[:space:]]+|[[:space:]]+$/, "", identifier); if (vendor == "Temurin" && version ~ /^21\./) { print identifier; exit } }')" && \
-    test -n "$JAVA_VERSION" && \
-    yes | sdk install java "$JAVA_VERSION" && \
-    yes | sdk install maven && \
-    yes | sdk install gradle && \
-    yes | sdk install sbt && \
-    yes | sdk install scalacli && \
-    yes | sdk install jbang && \
-    rm -rf "$SDKMAN_DIR/archives"/* && \
-    rm -rf "$SDKMAN_DIR/tmp"/*
-
-ENV GRADLE_HOME=/opt/sdkman/candidates/gradle/current
-ENV JAVA_HOME=/opt/sdkman/candidates/java/current
-ENV JBANG_HOME=/opt/sdkman/candidates/jbang/current
-ENV MAVEN_HOME=/opt/sdkman/candidates/maven/current
-ENV SBT_HOME=/opt/sdkman/candidates/sbt/current
-ENV SCALACLI_HOME=/opt/sdkman/candidates/scalacli/current
 ENV HOME=/home/dev
-ENV PATH="/opt/opencode-config/bin:/usr/local/bin:${SCALACLI_HOME}/bin:${SBT_HOME}/bin:${MAVEN_HOME}/bin:${JBANG_HOME}/bin:${JAVA_HOME}/bin:${GRADLE_HOME}/bin:${PATH}"
-
-RUN mkdir -p /tmp/opencode-home && \
-    curl -fsSL https://opencode.ai/install | HOME=/tmp/opencode-home bash -s -- --no-modify-path && \
-    /tmp/opencode-home/.opencode/bin/opencode --version
-
-USER root
-RUN cp /tmp/opencode-home/.opencode/bin/opencode /usr/local/bin/opencode && \
-    chmod 0755 /usr/local/bin/opencode && \
-    rm -rf /tmp/opencode-home
+ENV PATH="/opt/opencode-config/bin:/usr/local/bin:${PATH}"
 
 COPY bin/devcontainer-entrypoint /usr/local/bin/devcontainer-entrypoint
 COPY bin/osc52-clipboard /usr/local/bin/osc52-clipboard
