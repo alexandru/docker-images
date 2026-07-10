@@ -5,6 +5,7 @@
 import argparse
 import json
 import os
+import posixpath
 import shlex
 import shutil
 import stat
@@ -144,6 +145,13 @@ def project_path(path):
     return canonical_dir(path, "Project")
 
 
+def path_is_within(path, parent):
+    try:
+        return os.path.commonpath([path, parent]) == parent
+    except ValueError:
+        return False
+
+
 def git_rev_parse_dir(project_dir, option):
     try:
         result = subprocess.run(
@@ -256,13 +264,14 @@ def ordered_add(values, value):
 
 
 class DevContainer:
-    def __init__(self, command, project_dir="", command_args=None, container_cli=None):
+    def __init__(self, command, project_dir="", command_args=None, container_cli=None, execution_dir=""):
         self.command = command
         self.project_dir = project_dir
         self.project_mount_dir = project_mount_path(project_dir) if project_dir else ""
         self.project_container_dir = project_dir
         self.project_container_mount_dir = self.project_mount_dir
         self.command_args = list(command_args or [])
+        self.execution_dir = execution_dir
         self.container_cli = container_cli or ""
         self.container_name = CONTAINER_NAME
         self.home_volume = home_volume()
@@ -381,6 +390,45 @@ class DevContainer:
     def container_working_dir(self):
         container = self.inspect_object(self.container_name)
         return container.get("Config", {}).get("WorkingDir", "")
+
+    def container_workspace_mount(self):
+        container = self.container_inspect()
+        workdir = container.get("Config", {}).get("WorkingDir", "")
+        if not workdir:
+            return "", ""
+
+        candidates = []
+        for mount in container.get("Mounts", []):
+            source = normalize_container_path(mount.get("Source", ""))
+            destination = mount.get("Destination", "")
+            if not source or not destination:
+                continue
+            if not posixpath.commonpath([workdir, destination]) == destination:
+                continue
+            candidates.append((destination, source))
+
+        if not candidates:
+            print("Container does not have a workspace bind mount.", file=sys.stderr)
+            raise SystemExit(1)
+
+        destination, source = min(candidates, key=lambda mount: len(mount[0]))
+        return os.path.realpath(source), destination
+
+    def container_directory(self, host_directory):
+        requested_dir = canonical_dir(host_directory, "Requested")
+        host_mount_dir, container_mount_dir = self.container_workspace_mount()
+
+        if not path_is_within(requested_dir, host_mount_dir):
+            print(
+                f"Requested directory is outside the started workspace: {requested_dir}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        relative_path = os.path.relpath(requested_dir, host_mount_dir)
+        if relative_path == ".":
+            return container_mount_dir
+        return posixpath.normpath(posixpath.join(container_mount_dir, relative_path))
 
     def container_agent_ports(self):
         container = self.inspect_object(self.container_name)
@@ -552,7 +600,7 @@ class DevContainer:
         )
 
     def exec_container(self, args):
-        workdir = self.project_container_dir or EXEC_WORKDIR
+        workdir = self.execution_dir or self.project_container_dir or EXEC_WORKDIR
         command = [
             self.container_cli,
             "exec",
@@ -561,6 +609,8 @@ class DevContainer:
             CONTAINER_USER,
             "-w",
             workdir,
+            "-e",
+            f"TERM={os.environ.get('TERM') or 'xterm-256color'}",
             *self.container_env_args,
             self.container_name,
             "/usr/local/bin/devcontainer-entrypoint",
@@ -585,6 +635,7 @@ class DevContainer:
 
     def shell_container(self):
         self.assert_container_running()
+        self.execution_dir = self.container_directory(self.execution_dir or os.curdir)
         self.exec_container(["bash"])
 
     def exec_command(self):
@@ -593,6 +644,7 @@ class DevContainer:
 
     def agent(self):
         self.assert_container_running()
+        self.execution_dir = self.container_directory(self.execution_dir or os.curdir)
         self.exec_container(["opencode", *self.command_args])
 
     def agent_serve(self):
@@ -850,7 +902,16 @@ def build_parser():
 
     add_simple_command("stop", "Stop the devcontainer.")
     add_simple_command("restart", "Restart the devcontainer; fails if it does not exist.")
-    add_simple_command("shell", "Open an interactive shell in the running devcontainer.")
+    shell_parser = add_simple_command(
+        "shell",
+        "Open an interactive shell in the running devcontainer at a workspace directory.",
+    )
+    shell_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=os.curdir,
+        help="Host directory under the workspace started by `start` (defaults to the current directory).",
+    )
     add_simple_command("agent-serve", "Run the opencode server in the running devcontainer.")
     add_simple_command("purge", "Delete the devcontainer. The shared /home/dev volume is kept.")
 
@@ -859,9 +920,16 @@ def build_parser():
         "Run a command in the running devcontainer.",
     )
 
-    add_passthrough_command(
+    agent_parser = add_passthrough_command(
         "agent",
-        "Start opencode in the running devcontainer.",
+        "Start opencode in the running devcontainer at a workspace directory.",
+    )
+    agent_parser.add_argument(
+        "-C",
+        "--directory",
+        dest="execution_dir",
+        metavar="DIRECTORY",
+        help="Host directory under the workspace started by `start`; defaults to the current directory.",
     )
 
     subparsers.add_parser(
@@ -891,7 +959,17 @@ def create_devcontainer(namespace, container_cli):
         project_dir = project_path(namespace.project_directory)
 
     command_args = getattr(namespace, "command_args", [])
-    return DevContainer(namespace.command, project_dir, command_args, container_cli)
+    execution_dir = getattr(namespace, "execution_dir", "")
+    if namespace.command == "shell":
+        execution_dir = namespace.directory
+    elif namespace.command == "agent" and not execution_dir:
+        command_args = list(command_args)
+        if command_args and command_args[0] != "--":
+            candidate = os.path.expanduser(command_args[0])
+            if candidate.startswith((".", os.path.sep, "~")):
+                execution_dir = command_args.pop(0)
+
+    return DevContainer(namespace.command, project_dir, command_args, container_cli, execution_dir)
 
 
 def dispatch(devcontainer):
